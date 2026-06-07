@@ -1,5 +1,5 @@
 /* AquaGestión Service Worker — offline-first cache */
-const CACHE_VERSION = 'aquagestion-v1';
+const CACHE_VERSION = 'aquagestion-v2';
 const ASSETS = [
   './',
   './index.html',

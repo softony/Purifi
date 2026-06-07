@@ -3,6 +3,10 @@
    Mobile-first · botones grandes · texto legible · alto contraste
    ============================================================ */
 
+/* Garantiza que el atributo hidden SIEMPRE oculte el elemento,
+   aunque una clase defina display (corrige el modal "Título" superpuesto). */
+[hidden] { display: none !important; }
+
 :root {
   --azul: #0277bd;
   --azul-osc: #01579b;
