@@ -1,0 +1,13 @@
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Logs y temporales
+*.log
+*.tmp
+
+# Configuración local del editor/entorno
+.kiro/
+
+# Dependencias (no se usan; todo es vanilla)
+node_modules/

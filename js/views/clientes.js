@@ -1,0 +1,174 @@
+/**
+ * clientes.js — Gestión de clientes (alta, edición, borrado, búsqueda).
+ */
+import { STORES, getAll, add, put, remove, get } from '../db.js';
+import {
+  el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
+  FRECUENCIAS, dinero
+} from '../utils.js';
+import { saldosTodos } from '../services.js';
+
+let _cache = [];
+let _saldos = new Map();
+
+function frecBadge(f) {
+  return el('span', { class: 'badge badge--info', text: f || 'Sin definir' });
+}
+
+function tarjetaCliente(c) {
+  const saldo = _saldos.get(c.id) || 0;
+  const meta = [c.calle, c.colonia].filter(Boolean).join(', ');
+  const main = el('div', { class: 'item__main' }, [
+    el('div', { class: 'item__title', text: c.nombre }),
+    el('div', { class: 'item__meta', html: `${esc(meta || 'Sin dirección')}${c.telefono ? ' · 📞 ' + esc(c.telefono) : ''}` }),
+    el('div', { class: 'tag-line mt' }, [
+      frecBadge(c.frecuencia),
+      saldo > 0.001 ? el('span', { class: 'badge badge--adeudo', text: `Debe ${dinero(saldo)}` }) : null
+    ])
+  ]);
+  const actions = el('div', { class: 'item__actions' }, [
+    el('button', { class: 'icon-btn', title: 'Editar', text: '✏️', onclick: () => formularioCliente(c) }),
+    el('button', { class: 'icon-btn icon-btn--danger', title: 'Eliminar', text: '🗑️', onclick: () => eliminarCliente(c) })
+  ]);
+  return el('div', { class: 'item' }, [main, actions]);
+}
+
+async function eliminarCliente(c) {
+  const ok = await confirmar(`¿Eliminar a "${c.nombre}"? Sus pedidos y pagos quedarán sin cliente asignado.`, { ok: 'Eliminar', peligro: true });
+  if (!ok) return;
+  await remove(STORES.clientes, c.id);
+  toast('Cliente eliminado', 'success');
+  await recargar();
+}
+
+function formularioCliente(cliente = {}) {
+  const esEdit = !!cliente.id;
+  const f = el('form', { class: 'form' });
+  f.innerHTML = `
+    <div class="field">
+      <label for="cNombre">Nombre *</label>
+      <input id="cNombre" name="nombre" required placeholder="Nombre del cliente" value="${esc(cliente.nombre || '')}" />
+    </div>
+    <div class="field">
+      <label for="cTel">Teléfono</label>
+      <input id="cTel" name="telefono" type="tel" inputmode="tel" placeholder="Ej. 6181234567" value="${esc(cliente.telefono || '')}" />
+    </div>
+    <div class="field--row">
+      <div class="field">
+        <label for="cCalle">Calle y número</label>
+        <input id="cCalle" name="calle" placeholder="Calle y número" value="${esc(cliente.calle || '')}" />
+      </div>
+      <div class="field">
+        <label for="cCol">Colonia</label>
+        <input id="cCol" name="colonia" placeholder="Colonia / zona" value="${esc(cliente.colonia || '')}" />
+      </div>
+    </div>
+    <div class="field">
+      <label for="cRef">Referencia</label>
+      <input id="cRef" name="referencia" placeholder="Ej. portón azul, frente a la tienda" value="${esc(cliente.referencia || '')}" />
+    </div>
+    <div class="field">
+      <label for="cFrec">Frecuencia de compra</label>
+      <select id="cFrec" name="frecuencia">
+        ${FRECUENCIAS.map((x) => `<option ${cliente.frecuencia === x ? 'selected' : ''}>${x}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <label for="cNotas">Notas</label>
+      <textarea id="cNotas" name="notas" placeholder="Notas adicionales">${esc(cliente.notas || '')}</textarea>
+    </div>
+    <div class="form__actions">
+      <button type="button" class="btn btn--ghost btn--lg grow" id="btnCancelar">Cancelar</button>
+      <button type="submit" class="btn btn--primary btn--lg grow">${esEdit ? 'Guardar' : 'Agregar'}</button>
+    </div>
+  `;
+  f.querySelector('#btnCancelar').addEventListener('click', cerrarModal);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const datos = Object.fromEntries(fd.entries());
+    datos.nombre = (datos.nombre || '').trim();
+    if (!datos.nombre) { toast('El nombre es obligatorio', 'error'); return; }
+
+    // Conserva campos de geolocalización futuros si existían
+    const registro = { ...cliente, ...datos };
+    if (esEdit) {
+      await put(STORES.clientes, registro);
+      toast('Cliente actualizado', 'success');
+    } else {
+      registro.creadoEn = new Date().toISOString();
+      await add(STORES.clientes, registro);
+      toast('Cliente agregado', 'success');
+    }
+    cerrarModal();
+    await recargar();
+  });
+
+  abrirModal(esEdit ? 'Editar cliente' : 'Nuevo cliente', f);
+}
+
+function aplicarFiltros() {
+  const q = ($('#buscarCliente')?.value || '').toLowerCase().trim();
+  const col = $('#filtroColonia')?.value || '';
+  const cont = $('#listaClientes');
+  if (!cont) return;
+
+  let lista = _cache.slice();
+  if (q) lista = lista.filter((c) =>
+    [c.nombre, c.telefono, c.calle, c.colonia, c.referencia].some((v) => (v || '').toLowerCase().includes(q)));
+  if (col) lista = lista.filter((c) => (c.colonia || 'Sin colonia') === col);
+
+  lista.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'));
+
+  cont.innerHTML = '';
+  if (!lista.length) {
+    cont.appendChild(el('div', { class: 'empty-state' }, [
+      el('span', { class: 'emoji', text: '🔍' }),
+      el('p', { text: 'No se encontraron clientes.' })
+    ]));
+    return;
+  }
+  lista.forEach((c) => cont.appendChild(tarjetaCliente(c)));
+}
+
+async function recargar() {
+  [_cache, _saldos] = await Promise.all([getAll(STORES.clientes), saldosTodos()]);
+  pintarFiltroColonia();
+  aplicarFiltros();
+}
+
+function pintarFiltroColonia() {
+  const sel = $('#filtroColonia');
+  if (!sel) return;
+  const actual = sel.value;
+  const colonias = Array.from(new Set(_cache.map((c) => c.colonia || 'Sin colonia'))).sort((a, b) => a.localeCompare(b, 'es'));
+  sel.innerHTML = '<option value="">Todas las colonias</option>' + colonias.map((c) => `<option ${actual === c ? 'selected' : ''}>${esc(c)}</option>`).join('');
+}
+
+export async function render(root, params = []) {
+  [_cache, _saldos] = await Promise.all([getAll(STORES.clientes), saldosTodos()]);
+
+  root.innerHTML = '';
+  root.appendChild(el('div', { class: 'page-head' }, [
+    el('h2', { text: `Clientes (${_cache.length})` }),
+    el('button', { class: 'btn btn--primary', text: '➕ Nuevo', onclick: () => formularioCliente() })
+  ]));
+
+  const toolbar = el('div', { class: 'toolbar' }, [
+    el('input', { id: 'buscarCliente', class: 'search', type: 'search', placeholder: '🔍 Buscar por nombre, teléfono o dirección', oninput: debounce(aplicarFiltros, 200) }),
+    el('select', { id: 'filtroColonia', onchange: aplicarFiltros })
+  ]);
+  root.appendChild(toolbar);
+
+  root.appendChild(el('div', { id: 'listaClientes', class: 'list' }));
+  root.appendChild(el('button', { class: 'fab', title: 'Nuevo cliente', text: '＋', onclick: () => formularioCliente() }));
+
+  pintarFiltroColonia();
+  aplicarFiltros();
+
+  if (params[0] === 'nuevo') formularioCliente();
+  else if (params[0] === 'editar' && params[1]) {
+    const c = await get(STORES.clientes, Number(params[1]));
+    if (c) formularioCliente(c);
+  }
+}
