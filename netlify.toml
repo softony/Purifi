@@ -1,0 +1,37 @@
+# Configuración de despliegue para Netlify
+# App estática (HTML/JS/CSS) — no requiere compilación.
+
+[build]
+  # Publica la raíz del repositorio (donde está index.html)
+  publish = "."
+  command = ""
+
+# --- Cabeceras ---
+# El Service Worker NO debe quedar cacheado por el CDN/navegador,
+# para que las actualizaciones de la app se detecten de inmediato.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+    Service-Worker-Allowed = "/"
+
+# El HTML principal tampoco se cachea de forma agresiva.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# El manifest siempre fresco (instalación/íconos).
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# --- Redirección tipo SPA ---
+# Cualquier ruta que NO corresponda a un archivo real sirve index.html.
+# (Netlify entrega primero los archivos existentes: js, css, íconos, etc.,
+#  así que esto no rompe los recursos; solo evita errores 404 de navegación.)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

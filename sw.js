@@ -1,5 +1,5 @@
 /* AquaGestión Service Worker — offline-first cache */
-const CACHE_VERSION = 'aquagestion-v2';
+const CACHE_VERSION = 'aquagestion-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -42,20 +42,27 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  // Network-first for navigation, cache fallback (offline)
+  // Navegación: intenta la red, pero si falla O responde con error (404/500),
+  // sirve la copia cacheada de index.html. Así la app instalada sigue abriendo
+  // aunque el servidor no esté disponible o el repo quede privado.
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req).catch(() => caches.match('./index.html'))
+      fetch(req)
+        .then((res) => {
+          if (res && res.ok) return res;
+          return caches.match('./index.html').then((cached) => cached || res);
+        })
+        .catch(() => caches.match('./index.html'))
     );
     return;
   }
 
-  // Cache-first for everything else (static assets)
+  // Cache-first para el resto (recursos estáticos)
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
       return fetch(req).then((res) => {
-        // Cache same-origin successful responses on the fly
+        // Cachea respuestas válidas del mismo origen sobre la marcha
         if (res && res.status === 200 && req.url.startsWith(self.location.origin)) {
           const copy = res.clone();
           caches.open(CACHE_VERSION).then((cache) => cache.put(req, copy));
