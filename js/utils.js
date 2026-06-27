@@ -179,7 +179,7 @@ export function descargarArchivo(nombre, contenido, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-export const FRECUENCIAS = ['Diario', 'Cada 3 días', 'Semanal', 'Quincenal'];
+export const FRECUENCIAS = ['Diario', 'Cada 3 días', 'Semanal', 'Quincenal', 'Mensual'];
 export const METODOS_PAGO = ['Efectivo', 'Transferencia', 'Crédito (adeudo)'];
 export const ESTADOS_PEDIDO = ['Pendiente', 'Entregado'];
 
@@ -188,5 +188,6 @@ export const FRECUENCIA_DIAS = {
   'Diario': 1,
   'Cada 3 días': 3,
   'Semanal': 7,
-  'Quincenal': 15
+  'Quincenal': 15,
+  'Mensual': 30
 };
