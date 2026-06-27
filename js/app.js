@@ -31,13 +31,28 @@ const viewTitle = document.getElementById('viewTitle');
 
 /* ---------- Service Worker ---------- */
 function registrarSW() {
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch((err) => {
-        console.warn('No se pudo registrar el Service Worker:', err);
-      });
+  if (!('serviceWorker' in navigator)) return;
+
+  // ¿Ya había un Service Worker controlando la página al cargar?
+  // Si lo había, un cambio de controlador significa que se instaló una
+  // versión NUEVA de la app: recargamos una sola vez para servir los
+  // archivos actualizados (evita quedarse con una versión vieja en caché).
+  const habiaControlador = !!navigator.serviceWorker.controller;
+  let recargando = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (recargando || !habiaControlador) return;
+    recargando = true;
+    window.location.reload();
+  });
+
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      // Busca actualizaciones del SW en cada arranque.
+      reg.update().catch(() => {});
+    }).catch((err) => {
+      console.warn('No se pudo registrar el Service Worker:', err);
     });
-  }
+  });
 }
 
 /* ---------- Estado de conexión ---------- */
