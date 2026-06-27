@@ -1,8 +1,11 @@
 /* AquaGestión Service Worker — offline-first cache */
-const CACHE_VERSION = 'aquagestion-v2';
+const CACHE_VERSION = 'aquagestion-v3';
+// Nota: NO se incluye './index.html' a propósito. En Cloudflare Pages (y Netlify)
+// '/index.html' responde con una redirección 308 hacia '/', y la Cache API rechaza
+// toda la operación addAll cuando un recurso redirige, lo que rompía el modo offline
+// (error 404 al abrir la app instalada). Se cachea la raíz './' que sí responde 200.
 const ASSETS = [
   './',
-  './index.html',
   './manifest.json',
   './css/styles.css',
   './js/app.js',
@@ -26,7 +29,17 @@ const ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE_VERSION).then((cache) =>
+      // Se cachea cada recurso de forma individual y tolerante a fallos: si alguno
+      // falla o redirige, no se aborta toda la instalación del Service Worker.
+      Promise.allSettled(
+        ASSETS.map((url) =>
+          cache.add(new Request(url, { cache: 'reload' })).catch((err) => {
+            console.warn('SW: no se pudo precachear', url, err);
+          })
+        )
+      )
+    ).then(() => self.skipWaiting())
   );
 });
 
@@ -45,7 +58,12 @@ self.addEventListener('fetch', (event) => {
   // Network-first for navigation, cache fallback (offline)
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req).catch(() => caches.match('./index.html'))
+      fetch(req).catch(() =>
+        // Offline: se sirve la raíz cacheada ('./'). El enrutado es por hash,
+        // así que index.html (raíz) reconstruye cualquier vista (#/dashboard, etc.).
+        caches.match('./', { ignoreSearch: true })
+          .then((cached) => cached || caches.match('./index.html'))
+      )
     );
     return;
   }
