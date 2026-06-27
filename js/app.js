@@ -11,6 +11,7 @@ import * as clientes from './views/clientes.js';
 import * as pedidos from './views/pedidos.js';
 import * as cobranza from './views/cobranza.js';
 import * as rutas from './views/rutas.js';
+import * as gastos from './views/gastos.js';
 import * as reportes from './views/reportes.js';
 import * as configuracion from './views/configuracion.js';
 
@@ -20,6 +21,7 @@ const ROUTES = {
   pedidos: { title: 'Pedidos', mod: pedidos },
   cobranza: { title: 'Cobranza', mod: cobranza },
   rutas: { title: 'Rutas', mod: rutas },
+  gastos: { title: 'Gastos', mod: gastos },
   reportes: { title: 'Reportes', mod: reportes },
   configuracion: { title: 'Configuración', mod: configuracion }
 };

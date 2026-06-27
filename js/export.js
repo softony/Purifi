@@ -118,8 +118,8 @@ export function exportarExcel(nombre, sheets) {
 
 /** Exporta TODO el sistema como un libro Excel con varias hojas. */
 export async function exportarExcelCompleto() {
-  const [clientes, pedidos, pagos] = await Promise.all([
-    getAll(STORES.clientes), getAll(STORES.pedidos), getAll(STORES.pagos)
+  const [clientes, pedidos, pagos, gastos] = await Promise.all([
+    getAll(STORES.clientes), getAll(STORES.pedidos), getAll(STORES.pagos), getAll(STORES.gastos)
   ]);
   const mapaCliente = new Map(clientes.map((c) => [c.id, c.nombre]));
 
@@ -152,6 +152,15 @@ export async function exportarExcelCompleto() {
         { key: 'id', label: 'ID' }, { key: 'fecha', label: 'Fecha' },
         { key: 'cliente', label: 'Cliente' }, { key: 'tipo', label: 'Tipo' },
         { key: 'monto', label: 'Monto' }, { key: 'concepto', label: 'Concepto' }
+      ]
+    },
+    {
+      nombre: 'Gastos',
+      rows: gastos,
+      columns: [
+        { key: 'id', label: 'ID' }, { key: 'fecha', label: 'Fecha' },
+        { key: 'categoria', label: 'Categoría' }, { key: 'monto', label: 'Monto' },
+        { key: 'concepto', label: 'Concepto' }
       ]
     }
   ]);

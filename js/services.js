@@ -141,3 +141,21 @@ export function ventasPorDia(pedidos, desdeISO, hastaISO) {
   });
   return Array.from(map.values()).sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
+
+/** Suma total de gastos dentro de un rango de fechas ISO inclusivo. */
+export function totalGastos(gastos, desdeISO, hastaISO) {
+  return filtrarPorFecha(gastos, desdeISO, hastaISO)
+    .reduce((s, g) => s + (Number(g.monto) || 0), 0);
+}
+
+/** Gastos agrupados por categoría dentro de un rango. Devuelve [ {categoria, total} ] desc. */
+export function gastosPorCategoria(gastos, desdeISO, hastaISO) {
+  const map = new Map();
+  filtrarPorFecha(gastos, desdeISO, hastaISO).forEach((g) => {
+    const cat = g.categoria || 'Otros';
+    map.set(cat, (map.get(cat) || 0) + (Number(g.monto) || 0));
+  });
+  return Array.from(map.entries())
+    .map(([categoria, total]) => ({ categoria, total }))
+    .sort((a, b) => b.total - a.total);
+}

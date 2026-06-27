@@ -183,6 +183,17 @@ export const FRECUENCIAS = ['Diario', 'Cada 3 días', 'Semanal', 'Quincenal', 'M
 export const METODOS_PAGO = ['Efectivo', 'Transferencia', 'Crédito (adeudo)'];
 export const ESTADOS_PEDIDO = ['Pendiente', 'Entregado'];
 
+/** Categorías de gasto, basadas en los costos operativos reales del negocio. */
+export const GASTO_CATEGORIAS = [
+  'Nómina',
+  'Insumos (tapas, sellos)',
+  'Gasolina / Logística',
+  'Renta',
+  'Filtros / Mantenimiento',
+  'Servicios (luz, agua)',
+  'Otros'
+];
+
 /** Días estimados según frecuencia, para sugerencias de ruta. */
 export const FRECUENCIA_DIAS = {
   'Diario': 1,

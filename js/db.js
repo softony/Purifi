@@ -14,13 +14,14 @@
  */
 
 const DB_NAME = 'aquagestion';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export const STORES = {
   clientes: 'clientes',
   pedidos: 'pedidos',
   pagos: 'pagos',
   rutas: 'rutas',
+  gastos: 'gastos',
   config: 'config'
 };
 
@@ -58,6 +59,13 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORES.rutas)) {
         const s = db.createObjectStore(STORES.rutas, { keyPath: 'id', autoIncrement: true });
         s.createIndex('fecha', 'fecha', { unique: false });
+      }
+
+      // v2: almacén de gastos para medir la utilidad real del negocio.
+      if (!db.objectStoreNames.contains(STORES.gastos)) {
+        const s = db.createObjectStore(STORES.gastos, { keyPath: 'id', autoIncrement: true });
+        s.createIndex('fecha', 'fecha', { unique: false });
+        s.createIndex('categoria', 'categoria', { unique: false });
       }
 
       if (!db.objectStoreNames.contains(STORES.config)) {
@@ -158,18 +166,19 @@ export async function setConfigBulk(obj) {
 /* ---------- Respaldo total (export/import completo) ---------- */
 
 export async function dumpAll() {
-  const [clientes, pedidos, pagos, rutas, config] = await Promise.all([
+  const [clientes, pedidos, pagos, rutas, gastos, config] = await Promise.all([
     getAll(STORES.clientes),
     getAll(STORES.pedidos),
     getAll(STORES.pagos),
     getAll(STORES.rutas),
+    getAll(STORES.gastos),
     getAll(STORES.config)
   ]);
   return {
     app: 'AquaGestion',
     version: DB_VERSION,
     exportadoEn: new Date().toISOString(),
-    datos: { clientes, pedidos, pagos, rutas, config }
+    datos: { clientes, pedidos, pagos, rutas, gastos, config }
   };
 }
 
@@ -178,7 +187,7 @@ export async function importAll(backup, { merge = false } = {}) {
   const d = backup.datos;
   const db = await openDB();
 
-  const storesToWrite = [STORES.clientes, STORES.pedidos, STORES.pagos, STORES.rutas, STORES.config];
+  const storesToWrite = [STORES.clientes, STORES.pedidos, STORES.pagos, STORES.rutas, STORES.gastos, STORES.config];
   await new Promise((resolve, reject) => {
     const t = db.transaction(storesToWrite, 'readwrite');
     t.oncomplete = resolve;
@@ -191,6 +200,7 @@ export async function importAll(backup, { merge = false } = {}) {
     (d.pedidos || []).forEach((r) => t.objectStore(STORES.pedidos).put(r));
     (d.pagos || []).forEach((r) => t.objectStore(STORES.pagos).put(r));
     (d.rutas || []).forEach((r) => t.objectStore(STORES.rutas).put(r));
+    (d.gastos || []).forEach((r) => t.objectStore(STORES.gastos).put(r));
     (d.config || []).forEach((r) => t.objectStore(STORES.config).put(r));
   });
 }
@@ -200,7 +210,8 @@ export async function resetAll() {
     clear(STORES.clientes),
     clear(STORES.pedidos),
     clear(STORES.pagos),
-    clear(STORES.rutas)
+    clear(STORES.rutas),
+    clear(STORES.gastos)
   ]);
 }
 

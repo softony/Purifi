@@ -7,11 +7,13 @@ import {
   nombreMes, toast, folioCliente
 } from '../utils.js';
 import {
-  ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes
+  ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes,
+  totalGastos, gastosPorCategoria
 } from '../services.js';
 import { exportarExcel, exportarPDF, exportarCSV } from '../export.js';
 
 let _pedidos = [];
+let _gastos = [];
 let _periodo = 'semana';
 let _datos = null; // resultado calculado actual
 
@@ -41,7 +43,14 @@ async function calcular() {
   }
   deudores.sort((a, b) => b.saldo - a.saldo);
 
-  _datos = { desde, hasta, titulo, porDia, totalVentas, totalGarrafones, pedidos: enRango.length, frecuentes, deudores };
+  const gastosPeriodo = totalGastos(_gastos, desde, hasta);
+  const gastosCat = gastosPorCategoria(_gastos, desde, hasta);
+  const utilidad = Math.round((totalVentas - gastosPeriodo) * 100) / 100;
+
+  _datos = {
+    desde, hasta, titulo, porDia, totalVentas, totalGarrafones, pedidos: enRango.length,
+    frecuentes, deudores, gastosPeriodo, gastosCat, utilidad
+  };
   return _datos;
 }
 
@@ -89,6 +98,37 @@ function tablaDeudores(d) {
 }
 
 /* ---------- Exportaciones ---------- */
+function tablaGastos(d) {
+  const wrap = el('div', { class: 'table-wrap' });
+  const t = el('table', { class: 'data' });
+  t.innerHTML = `
+    <thead><tr><th>Categoría</th><th>Total</th></tr></thead>
+    <tbody>
+      ${d.gastosCat.map((g) => `<tr><td>${g.categoria}</td><td>${dinero(g.total)}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">Sin gastos en el periodo.</td></tr>'}
+    </tbody>
+    <tfoot><tr><th>Total gastos</th><th>${dinero(d.gastosPeriodo)}</th></tr></tfoot>
+  `;
+  wrap.appendChild(t);
+  return wrap;
+}
+
+function tarjetaBalance(d) {
+  const positivo = d.utilidad >= 0;
+  return el('div', { class: 'card', style: `background:${positivo ? 'var(--verde-claro)' : 'var(--rojo-claro, #ffebee)'}` }, [
+    el('h3', { text: '⚖️ Balance del periodo' }),
+    el('div', { class: 'balance' }, [
+      el('div', { class: 'balance__row' }, [el('span', { text: 'Ingresos (ventas)' }), el('strong', { text: dinero(d.totalVentas) })]),
+      el('div', { class: 'balance__row' }, [el('span', { text: 'Gastos' }), el('strong', { text: '− ' + dinero(d.gastosPeriodo) })]),
+      el('div', { class: 'balance__row balance__row--total' }, [
+        el('span', { text: positivo ? 'Utilidad' : 'Pérdida' }),
+        el('strong', { text: dinero(d.utilidad) })
+      ])
+    ]),
+    el('p', { class: 'muted', style: 'margin:8px 0 0', text: d.gastosPeriodo === 0 ? 'Aún no hay gastos registrados en el periodo. Registra los gastos para conocer la utilidad real.' : (positivo ? 'El negocio es rentable en este periodo. 🎉' : 'Los gastos superan a las ventas en este periodo.') })
+  ]);
+}
+
+
 function expExcel() {
   const d = _datos;
   if (!d) return;
@@ -104,6 +144,18 @@ function expExcel() {
     {
       nombre: 'Adeudos',
       rows: d.deudores.map((x) => ({ 'N.º': x.folio || '', Cliente: x.nombre, Telefono: x.telefono, Adeudo: x.saldo })),
+    },
+    {
+      nombre: 'Gastos por categoria',
+      rows: d.gastosCat.map((g) => ({ Categoria: g.categoria, Total: g.total })),
+    },
+    {
+      nombre: 'Balance',
+      rows: [
+        { Concepto: 'Ingresos (ventas)', Monto: d.totalVentas },
+        { Concepto: 'Gastos', Monto: d.gastosPeriodo },
+        { Concepto: d.utilidad >= 0 ? 'Utilidad' : 'Perdida', Monto: d.utilidad }
+      ],
     }
   ]);
   toast('Excel generado', 'success');
@@ -118,6 +170,12 @@ async function expPDF() {
       columns: [{ label: 'Fecha' }, { label: 'Pedidos' }, { label: 'Garrafones' }, { label: 'Total' }],
       rows: d.porDia.map((r) => [fechaLegible(r.fecha), r.pedidos, r.garrafones, dinero(r.total)]),
       resumen: `Total del periodo: ${dinero(d.totalVentas)} · ${numero(d.totalGarrafones)} garrafones · ${numero(d.pedidos)} pedidos.`
+    },
+    {
+      titulo: 'Gastos por categoría',
+      columns: [{ label: 'Categoría' }, { label: 'Total' }],
+      rows: d.gastosCat.map((g) => [g.categoria, dinero(g.total)]),
+      resumen: `Ingresos: ${dinero(d.totalVentas)}  −  Gastos: ${dinero(d.gastosPeriodo)}  =  ${d.utilidad >= 0 ? 'Utilidad' : 'Pérdida'}: ${dinero(d.utilidad)}.`
     },
     {
       titulo: 'Clientes más frecuentes',
@@ -158,6 +216,8 @@ async function pintar(root) {
   ]));
 
   body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '📈 ' + d.titulo }), tablaVentas(d)]));
+  body.appendChild(tarjetaBalance(d));
+  body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '🧾 Gastos por categoría' }), tablaGastos(d)]));
   body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '⭐ Clientes más frecuentes' }), tablaFrecuentes(d)]));
   body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '⚠️ Clientes con adeudos' }), tablaDeudores(d)]));
 
@@ -166,7 +226,7 @@ async function pintar(root) {
 }
 
 export async function render(root) {
-  _pedidos = await getAll(STORES.pedidos);
+  [_pedidos, _gastos] = await Promise.all([getAll(STORES.pedidos), getAll(STORES.gastos)]);
 
   root.innerHTML = '';
   root.appendChild(el('div', { class: 'page-head' }, [ el('h2', { text: 'Reportes' }) ]));

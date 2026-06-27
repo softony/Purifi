@@ -223,6 +223,15 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   vertical-align: middle;
 }
 
+/* ---------- Balance (utilidad del periodo) ---------- */
+.balance { display: flex; flex-direction: column; gap: 6px; }
+.balance__row { display: flex; justify-content: space-between; align-items: center; font-size: 1rem; }
+.balance__row--total {
+  border-top: 2px solid rgba(0,0,0,.12); margin-top: 4px; padding-top: 8px;
+  font-size: 1.25rem;
+}
+.balance__row--total strong { font-weight: 800; }
+
 /* ---------- Badges / chips ---------- */
 .badge {
   display: inline-block; padding: 3px 10px; border-radius: 999px;
