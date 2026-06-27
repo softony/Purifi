@@ -4,7 +4,7 @@
 import { STORES, getAll, add, put, remove, getConfig } from '../db.js';
 import {
   el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
-  dinero, numero, hoyISO, fechaLegible, METODOS_PAGO, ESTADOS_PEDIDO
+  dinero, numero, hoyISO, fechaLegible, METODOS_PAGO, ESTADOS_PEDIDO, folioCliente
 } from '../utils.js';
 import { mapaClientes } from '../services.js';
 
@@ -21,8 +21,9 @@ function estadoBadge(estado) {
 function tarjetaPedido(p) {
   const cli = _mapa.get(p.clienteId);
   const nombre = cli ? cli.nombre : '— Cliente eliminado —';
+  const folio = cli ? folioCliente(cli) : null;
   const main = el('div', { class: 'item__main' }, [
-    el('div', { class: 'item__title', text: `${nombre} · ${numero(p.cantidad)} garrafón(es)` }),
+    el('div', { class: 'item__title', html: `${folio ? `<span class="num-inline">N.º ${folio}</span> ` : ''}${esc(nombre)} · ${numero(p.cantidad)} garrafón(es)` }),
     el('div', { class: 'item__meta', html: `${esc(fechaLegible(p.fecha))} · ${esc(p.metodoPago || '')} · <strong>${dinero(p.total)}</strong>` }),
     el('div', { class: 'tag-line mt' }, [
       estadoBadge(p.estado),
@@ -79,7 +80,7 @@ function formularioPedido(pedido = {}) {
       <label for="pCliente">Cliente *</label>
       <select id="pCliente" name="clienteId" required>
         <option value="">Selecciona…</option>
-        ${_clientes.map((c) => `<option value="${c.id}" ${pedido.clienteId === c.id ? 'selected' : ''}>${esc(c.nombre)}${c.colonia ? ' — ' + esc(c.colonia) : ''}</option>`).join('')}
+        ${_clientes.map((c) => `<option value="${c.id}" ${pedido.clienteId === c.id ? 'selected' : ''}>N.º ${folioCliente(c)} · ${esc(c.nombre)}${c.colonia ? ' — ' + esc(c.colonia) : ''}</option>`).join('')}
       </select>
     </div>
     <div class="field--row">
@@ -184,7 +185,9 @@ function aplicarFiltros() {
   if (estado) lista = lista.filter((p) => p.estado === estado);
   if (q) lista = lista.filter((p) => {
     const cli = _mapa.get(p.clienteId);
-    return (cli?.nombre || '').toLowerCase().includes(q) || (p.observaciones || '').toLowerCase().includes(q);
+    return (cli?.nombre || '').toLowerCase().includes(q)
+      || (cli ? folioCliente(cli) : '').includes(q)
+      || (p.observaciones || '').toLowerCase().includes(q);
   });
   lista.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '') || (b.id - a.id));
 
@@ -216,7 +219,7 @@ export async function render(root, params = []) {
   ]));
 
   const toolbar = el('div', { class: 'toolbar' }, [
-    el('input', { id: 'buscarPedido', class: 'search', type: 'search', placeholder: '🔍 Buscar por cliente u observación', oninput: debounce(aplicarFiltros, 200) }),
+    el('input', { id: 'buscarPedido', class: 'search', type: 'search', placeholder: '🔍 Buscar por cliente, N.º u observación', oninput: debounce(aplicarFiltros, 200) }),
     (() => {
       const s = el('select', { id: 'filtroEstado', onchange: aplicarFiltros });
       s.innerHTML = '<option value="">Todos</option>' + ESTADOS_PEDIDO.map((x) => `<option>${x}</option>`).join('');

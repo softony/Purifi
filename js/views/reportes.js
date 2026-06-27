@@ -4,7 +4,7 @@
 import { STORES, getAll } from '../db.js';
 import {
   el, $, dinero, numero, hoyISO, fechaLegible, inicioSemanaISO, inicioMesISO,
-  nombreMes, toast
+  nombreMes, toast, folioCliente
 } from '../utils.js';
 import {
   ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes
@@ -36,7 +36,7 @@ async function calcular() {
   for (const [id, saldo] of saldos) {
     if (saldo > 0.001) {
       const c = mapa.get(id);
-      deudores.push({ nombre: c ? c.nombre : '— eliminado —', telefono: c?.telefono || '', saldo });
+      deudores.push({ folio: c ? folioCliente(c) : '—', nombre: c ? c.nombre : '— eliminado —', telefono: c?.telefono || '', saldo });
     }
   }
   deudores.sort((a, b) => b.saldo - a.saldo);
@@ -64,9 +64,9 @@ function tablaFrecuentes(d) {
   const wrap = el('div', { class: 'table-wrap' });
   const t = el('table', { class: 'data' });
   t.innerHTML = `
-    <thead><tr><th>Cliente</th><th>Pedidos</th><th>Garrafones</th></tr></thead>
+    <thead><tr><th>N.º</th><th>Cliente</th><th>Pedidos</th><th>Garrafones</th></tr></thead>
     <tbody>
-      ${d.frecuentes.filter((x) => x.pedidos > 0).map((x) => `<tr><td>${x.cliente.nombre}</td><td>${numero(x.pedidos)}</td><td>${numero(x.garrafones)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sin datos.</td></tr>'}
+      ${d.frecuentes.filter((x) => x.pedidos > 0).map((x) => `<tr><td>${folioCliente(x.cliente) || '—'}</td><td>${x.cliente.nombre}</td><td>${numero(x.pedidos)}</td><td>${numero(x.garrafones)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin datos.</td></tr>'}
     </tbody>
   `;
   wrap.appendChild(t);
@@ -78,11 +78,11 @@ function tablaDeudores(d) {
   const total = d.deudores.reduce((s, x) => s + x.saldo, 0);
   const t = el('table', { class: 'data' });
   t.innerHTML = `
-    <thead><tr><th>Cliente</th><th>Teléfono</th><th>Adeudo</th></tr></thead>
+    <thead><tr><th>N.º</th><th>Cliente</th><th>Teléfono</th><th>Adeudo</th></tr></thead>
     <tbody>
-      ${d.deudores.map((x) => `<tr><td>${x.nombre}</td><td>${x.telefono || '—'}</td><td>${dinero(x.saldo)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sin adeudos. 🎉</td></tr>'}
+      ${d.deudores.map((x) => `<tr><td>${x.folio || '—'}</td><td>${x.nombre}</td><td>${x.telefono || '—'}</td><td>${dinero(x.saldo)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin adeudos. 🎉</td></tr>'}
     </tbody>
-    <tfoot><tr><th colspan="2">Total por cobrar</th><th>${dinero(total)}</th></tr></tfoot>
+    <tfoot><tr><th colspan="3">Total por cobrar</th><th>${dinero(total)}</th></tr></tfoot>
   `;
   wrap.appendChild(t);
   return wrap;
@@ -99,11 +99,11 @@ function expExcel() {
     },
     {
       nombre: 'Clientes frecuentes',
-      rows: d.frecuentes.filter((x) => x.pedidos > 0).map((x) => ({ Cliente: x.cliente.nombre, Pedidos: x.pedidos, Garrafones: x.garrafones })),
+      rows: d.frecuentes.filter((x) => x.pedidos > 0).map((x) => ({ 'N.º': folioCliente(x.cliente) || '', Cliente: x.cliente.nombre, Pedidos: x.pedidos, Garrafones: x.garrafones })),
     },
     {
       nombre: 'Adeudos',
-      rows: d.deudores.map((x) => ({ Cliente: x.nombre, Telefono: x.telefono, Adeudo: x.saldo })),
+      rows: d.deudores.map((x) => ({ 'N.º': x.folio || '', Cliente: x.nombre, Telefono: x.telefono, Adeudo: x.saldo })),
     }
   ]);
   toast('Excel generado', 'success');
@@ -121,13 +121,13 @@ async function expPDF() {
     },
     {
       titulo: 'Clientes más frecuentes',
-      columns: [{ label: 'Cliente' }, { label: 'Pedidos' }, { label: 'Garrafones' }],
-      rows: d.frecuentes.filter((x) => x.pedidos > 0).map((x) => [x.cliente.nombre, x.pedidos, x.garrafones])
+      columns: [{ label: 'N.º' }, { label: 'Cliente' }, { label: 'Pedidos' }, { label: 'Garrafones' }],
+      rows: d.frecuentes.filter((x) => x.pedidos > 0).map((x) => [folioCliente(x.cliente) || '—', x.cliente.nombre, x.pedidos, x.garrafones])
     },
     {
       titulo: 'Clientes con adeudos',
-      columns: [{ label: 'Cliente' }, { label: 'Teléfono' }, { label: 'Adeudo' }],
-      rows: d.deudores.map((x) => [x.nombre, x.telefono || '—', dinero(x.saldo)]),
+      columns: [{ label: 'N.º' }, { label: 'Cliente' }, { label: 'Teléfono' }, { label: 'Adeudo' }],
+      rows: d.deudores.map((x) => [x.folio || '—', x.nombre, x.telefono || '—', dinero(x.saldo)]),
       resumen: `Total por cobrar: ${dinero(d.deudores.reduce((s, x) => s + x.saldo, 0))}.`
     }
   ]);

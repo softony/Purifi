@@ -6,7 +6,7 @@
 import { STORES, getAll, add, put, remove } from '../db.js';
 import {
   el, $, $$, toast, abrirModal, cerrarModal, confirmar, esc,
-  hoyISO, fechaLegible
+  hoyISO, fechaLegible, folioCliente
 } from '../utils.js';
 import { clientesPorColonia } from '../services.js';
 
@@ -29,6 +29,10 @@ async function pintarZonas(cont) {
     const body = el('div', { class: 'zona__body list', hidden: true });
     lista.forEach((c) => {
       body.appendChild(el('div', { class: 'item' }, [
+        el('div', { class: 'cliente-num', title: `Número de cliente ${folioCliente(c)}` }, [
+          el('small', { text: 'N.º' }),
+          el('b', { text: folioCliente(c) })
+        ]),
         el('div', { class: 'item__main' }, [
           el('div', { class: 'item__title', text: c.nombre }),
           el('div', { class: 'item__meta', html: `${esc([c.calle, c.referencia].filter(Boolean).join(' · ') || 'Sin calle')}${c.telefono ? ' · 📞 ' + esc(c.telefono) : ''}` })
@@ -59,7 +63,7 @@ function formularioRuta(ruta = null) {
           <label class="item" style="cursor:pointer">
             <input type="checkbox" value="${c.id}" ${seleccion.has(c.id) ? 'checked' : ''} style="width:26px;height:26px" />
             <div class="item__main">
-              <div class="item__title">${esc(c.nombre)}</div>
+              <div class="item__title"><span class="num-inline">N.º ${folioCliente(c)}</span> ${esc(c.nombre)}</div>
               <div class="item__meta">${esc([c.calle].filter(Boolean).join(', ') || 'Sin calle')}</div>
             </div>
           </label>`).join('')}
@@ -140,10 +144,11 @@ function tarjetaRuta(ruta) {
   ruta.paradas.forEach((parada, idx) => {
     const c = _mapaCliente.get(parada.clienteId);
     const nombre = c ? c.nombre : '— Cliente eliminado —';
+    const folio = c ? folioCliente(c) : null;
     const dir = c ? [c.calle, c.colonia].filter(Boolean).join(', ') : '';
     const item = el('div', { class: 'item' }, [
       el('div', { class: 'item__main', style: parada.entregado ? 'opacity:.6;text-decoration:line-through' : '' }, [
-        el('div', { class: 'item__title', text: `${idx + 1}. ${nombre}` }),
+        el('div', { class: 'item__title', html: `${idx + 1}. ${folio ? `<span class="num-inline">N.º ${folio}</span> ` : ''}${esc(nombre)}` }),
         el('div', { class: 'item__meta', html: `${esc(dir || 'Sin dirección')}${c?.referencia ? ' · ' + esc(c.referencia) : ''}` })
       ]),
       el('button', {

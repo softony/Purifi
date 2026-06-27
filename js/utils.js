@@ -54,6 +54,17 @@ export function numero(n) {
   return new Intl.NumberFormat('es-MX').format(Number(n) || 0);
 }
 
+/**
+ * Número de cliente legible para rotular (marcador/plumón) la parte baja del
+ * garrafón y poder rastrear de qué cliente provino la última vez. Se basa en el
+ * id único que la base de datos asigna automáticamente, por lo que es estable
+ * y no se repite. Devuelve null si el cliente aún no tiene id (sin guardar).
+ */
+export function folioCliente(c) {
+  if (!c || c.id == null) return null;
+  return String(c.id).padStart(3, '0');
+}
+
 /* ---------- Fechas ---------- */
 /** Devuelve 'YYYY-MM-DD' en hora local. */
 export function hoyISO(d = new Date()) {
