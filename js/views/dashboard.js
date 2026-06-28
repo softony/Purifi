@@ -1,7 +1,7 @@
 /**
  * dashboard.js — Vista principal con indicadores clave (KPIs).
  */
-import { el, dinero, numero, hoyISO, fechaLegible, CAPACIDAD_DIARIA } from '../utils.js';
+import { el, dinero, numero, hoyISO, fechaLegible, diasEntre, CAPACIDAD_DIARIA } from '../utils.js';
 import { resumenDashboard, seguimientoClientes } from '../services.js';
 import { getConfig } from '../db.js';
 
@@ -110,6 +110,23 @@ export async function render(root) {
   }
   avisos.appendChild(ul);
   root.appendChild(avisos);
+
+  // Recordatorio de respaldo fuera del dispositivo
+  const ultBackup = cfg.ultimoRespaldo ? cfg.ultimoRespaldo.slice(0, 10) : null;
+  const diasBackup = ultBackup ? diasEntre(ultBackup, hoyISO()) : null;
+  if (diasBackup == null || diasBackup >= 7) {
+    root.appendChild(el('div', { class: 'card', style: 'background:var(--naranja-claro)' }, [
+      el('div', { class: 'flex' }, [
+        el('div', { class: 'grow' }, [
+          el('div', { html: '<strong>🛟 Respalda tus datos</strong>' }),
+          el('p', { class: 'muted', style: 'margin:2px 0 0', text: diasBackup == null
+            ? 'Aún no has hecho un respaldo. Tus datos están solo en este dispositivo.'
+            : `Tu último respaldo fue hace ${diasBackup} día(s). Envíalo a WhatsApp o Drive.` })
+        ]),
+        el('button', { class: 'btn btn--warn btn--sm', text: 'Respaldar', onclick: () => window.navegar('configuracion') })
+      ])
+    ]));
+  }
 
   // Accesos rápidos
   const acc = el('div', { class: 'card' }, [

@@ -15,6 +15,30 @@ export async function exportarJSON() {
   return backup;
 }
 
+/**
+ * Comparte el respaldo como archivo usando la Web Share API (WhatsApp, Drive,
+ * correo, etc.) para sacarlo del dispositivo. Si no está disponible, lo descarga.
+ */
+export async function compartirRespaldo() {
+  const backup = await dumpAll();
+  const json = JSON.stringify(backup, null, 2);
+  const nombre = `aquagestion-respaldo-${hoyISO()}.json`;
+  await setConfig('ultimoRespaldo', new Date().toISOString());
+  try {
+    if (navigator.canShare) {
+      const file = new File([json], nombre, { type: 'application/json' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Respaldo Las Peques', text: 'Respaldo de datos de la purificadora (guárdalo en un lugar seguro).' });
+        return { compartido: true };
+      }
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return { compartido: false, cancelado: true };
+  }
+  descargarArchivo(nombre, json, 'application/json');
+  return { compartido: false };
+}
+
 export function leerArchivoTexto(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -250,7 +274,7 @@ export async function exportarPDF(nombreArchivo, tituloDoc, secciones) {
 }
 
 export default {
-  exportarJSON, importarJSON, leerArchivoTexto,
+  exportarJSON, compartirRespaldo, importarJSON, leerArchivoTexto,
   respaldoAutomatico, obtenerRespaldoAutoInfo, restaurarRespaldoAuto,
   generarCSV, exportarCSV, exportarExcel, exportarExcelCompleto, exportarPDF
 };
