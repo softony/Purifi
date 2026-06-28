@@ -15,7 +15,7 @@
  * Ingresos (ventas): se cuentan cuando el pedido se ENTREGA (no al crearlo).
  */
 import { STORES, getAll, getByIndex } from './db.js';
-import { hoyISO, inicioSemanaISO, inicioMesISO } from './utils.js';
+import { hoyISO, inicioSemanaISO, inicioMesISO, diasEntre, FRECUENCIA_DIAS } from './utils.js';
 
 export const CREDITO = 'Crédito (adeudo)';
 
@@ -132,6 +132,37 @@ export async function clientesMasFrecuentes(limite = 10) {
     .map((c) => ({ cliente: c, pedidos: conteo.get(c.id) || 0, garrafones: garraf.get(c.id) || 0 }))
     .sort((a, b) => b.pedidos - a.pedidos || b.garrafones - a.garrafones)
     .slice(0, limite);
+}
+
+/** Seguimiento de clientes: a quién toca visitar y quién está en riesgo de fuga.
+ * Calcula, según la frecuencia de cada cliente y su última entrega:
+ *  - 'al_dia'      : comprado hace menos del intervalo de su frecuencia
+ *  - 'por_visitar' : ya toca surtirle (entre 1x y 3x su intervalo)
+ *  - 'inactivo'    : lleva 3x su intervalo o más sin comprar (riesgo de fuga)
+ *  - 'sin_compras' : cliente registrado sin pedidos entregados
+ */
+export async function seguimientoClientes() {
+  const [clientes, pedidos] = await Promise.all([getAll(STORES.clientes), getAll(STORES.pedidos)]);
+  const ultima = new Map();
+  pedidos.forEach((p) => {
+    if (p.estado !== 'Entregado') return;
+    const f = (p.entregadoEn || '').slice(0, 10) || p.fecha;
+    if (!f) return;
+    const prev = ultima.get(p.clienteId);
+    if (!prev || f > prev) ultima.set(p.clienteId, f);
+  });
+  const hoy = hoyISO();
+  return clientes.map((c) => {
+    const interval = FRECUENCIA_DIAS[c.frecuencia] || 7;
+    const ult = ultima.get(c.id) || null;
+    const dias = ult ? diasEntre(ult, hoy) : null;
+    let estado;
+    if (!ult) estado = 'sin_compras';
+    else if (dias >= interval * 3) estado = 'inactivo';
+    else if (dias >= interval) estado = 'por_visitar';
+    else estado = 'al_dia';
+    return { cliente: c, ultima: ult, dias, interval, estado };
+  });
 }
 
 /** Agrupa clientes por colonia (zona) para rutas. */

@@ -268,5 +268,5 @@ export async function render(root, params = []) {
   root.appendChild(el('button', { class: 'fab', title: 'Nuevo pedido', text: '＋', onclick: () => formularioPedido() }));
 
   aplicarFiltros();
-  if (params[0] === 'nuevo') formularioPedido();
+  if (params[0] === 'nuevo') formularioPedido(params[1] ? { clienteId: Number(params[1]) } : {});
 }

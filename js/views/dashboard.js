@@ -2,7 +2,7 @@
  * dashboard.js — Vista principal con indicadores clave (KPIs).
  */
 import { el, dinero, numero, hoyISO, fechaLegible } from '../utils.js';
-import { resumenDashboard } from '../services.js';
+import { resumenDashboard, seguimientoClientes } from '../services.js';
 import { getConfig } from '../db.js';
 
 function kpi(icono, label, valor, clase) {
@@ -14,7 +14,9 @@ function kpi(icono, label, valor, clase) {
 }
 
 export async function render(root) {
-  const [r, cfg] = await Promise.all([resumenDashboard(), getConfig()]);
+  const [r, cfg, seg] = await Promise.all([resumenDashboard(), getConfig(), seguimientoClientes()]);
+  const porVisitar = seg.filter((i) => i.estado === 'por_visitar').length;
+  const inactivos = seg.filter((i) => i.estado === 'inactivo').length;
 
   root.innerHTML = '';
   root.appendChild(el('div', { class: 'page-head' }, [
@@ -63,8 +65,26 @@ export async function render(root) {
       el('button', { class: 'btn btn--primary btn--sm', text: 'Ver rutas', onclick: () => window.navegar('rutas') })
     ]));
   }
-  if (!r.clientesConAdeudo && !r.pendientes) {
-    ul.appendChild(el('p', { class: 'muted', text: '¡Todo al día! No hay adeudos ni pedidos pendientes.' }));
+  if (porVisitar > 0) {
+    ul.appendChild(el('div', { class: 'item' }, [
+      el('div', { class: 'item__main' }, [
+        el('div', { class: 'item__title', text: `${porVisitar} cliente(s) por visitar` }),
+        el('div', { class: 'item__meta', text: 'Según su frecuencia de compra, ya toca surtirles.' })
+      ]),
+      el('button', { class: 'btn btn--warn btn--sm', text: 'Ver seguimiento', onclick: () => window.navegar('seguimiento') })
+    ]));
+  }
+  if (inactivos > 0) {
+    ul.appendChild(el('div', { class: 'item' }, [
+      el('div', { class: 'item__main' }, [
+        el('div', { class: 'item__title', text: `${inactivos} cliente(s) inactivo(s)` }),
+        el('div', { class: 'item__meta', text: 'Llevan mucho sin comprar — posible riesgo de fuga.' })
+      ]),
+      el('button', { class: 'btn btn--ghost btn--sm', text: 'Ver seguimiento', onclick: () => window.navegar('seguimiento') })
+    ]));
+  }
+  if (!r.clientesConAdeudo && !r.pendientes && !porVisitar && !inactivos) {
+    ul.appendChild(el('p', { class: 'muted', text: '¡Todo al día! No hay adeudos, pendientes ni clientes por visitar.' }));
   }
   avisos.appendChild(ul);
   root.appendChild(avisos);
