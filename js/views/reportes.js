@@ -8,7 +8,8 @@ import {
 } from '../utils.js';
 import {
   ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes,
-  totalGastos, gastosPorCategoria, esVentaPedido
+  totalGastos, gastosPorCategoria, esVentaPedido,
+  stockGarrafones, seguimientoClientes, clientesPorColonia
 } from '../services.js';
 import { exportarExcel, exportarPDF, exportarCSV } from '../export.js';
 
@@ -204,6 +205,67 @@ function expCSV() {
   toast('CSV generado', 'success');
 }
 
+/** Reporte ejecutivo del mes: visión consolidada del negocio (para evaluar
+ * crecimiento o una posible asociación). */
+async function expEjecutivo() {
+  const desde = inicioMesISO();
+  const hasta = hoyISO();
+  const [clientes, pedidos, gastos, stock, seg, porColonia, saldos] = await Promise.all([
+    getAll(STORES.clientes), getAll(STORES.pedidos), getAll(STORES.gastos),
+    stockGarrafones(), seguimientoClientes(), clientesPorColonia(), saldosTodos()
+  ]);
+  const entregadosMes = filtrarPorFecha(pedidos.filter(esVentaPedido), desde, hasta);
+  const ventasMes = entregadosMes.reduce((s, p) => s + (Number(p.total) || 0), 0);
+  const garrafonesMes = entregadosMes.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  const ticket = entregadosMes.length ? ventasMes / entregadosMes.length : 0;
+  const gastosMes = totalGastos(gastos, desde, hasta);
+  const utilidad = Math.round((ventasMes - gastosMes) * 100) / 100;
+  let porCobrar = 0; let conAdeudo = 0;
+  for (const v of saldos.values()) { if (v > 0.001) { porCobrar += v; conAdeudo++; } }
+  const cuenta = (e) => seg.filter((i) => i.estado === e).length;
+
+  await exportarPDF(`reporte-ejecutivo-${hoyISO()}`, `Reporte ejecutivo · ${nombreMes()}`, [
+    {
+      titulo: 'Indicadores generales',
+      columns: [{ label: 'Indicador' }, { label: 'Valor' }],
+      rows: [
+        ['Clientes totales', numero(clientes.length)],
+        ['Clientes por visitar', numero(cuenta('por_visitar'))],
+        ['Clientes inactivos (riesgo)', numero(cuenta('inactivo'))],
+        ['Ventas del mes', dinero(ventasMes)],
+        ['Garrafones del mes', numero(garrafonesMes)],
+        ['Pedidos entregados (mes)', numero(entregadosMes.length)],
+        ['Ticket promedio', dinero(ticket)]
+      ]
+    },
+    {
+      titulo: 'Resultado del mes',
+      columns: [{ label: 'Concepto' }, { label: 'Monto' }],
+      rows: [
+        ['Ingresos (ventas)', dinero(ventasMes)],
+        ['Gastos', dinero(gastosMes)],
+        [utilidad >= 0 ? 'Utilidad' : 'Pérdida', dinero(utilidad)]
+      ],
+      resumen: `Cuentas por cobrar: ${dinero(porCobrar)} en ${conAdeudo} cliente(s).`
+    },
+    {
+      titulo: 'Cobertura por zona',
+      columns: [{ label: 'Zona / colonia' }, { label: 'Clientes' }],
+      rows: porColonia.map(([zona, lista]) => [zona, numero(lista.length)])
+    },
+    {
+      titulo: 'Inventario de garrafones',
+      columns: [{ label: 'Categoría' }, { label: 'Existencias' }],
+      rows: [
+        ['Nuevos', numero(stock.nuevos)],
+        ['Usados / retornados', numero(stock.usados)],
+        ['Total', numero(stock.total)]
+      ]
+    }
+  ]);
+  toast('Reporte ejecutivo generado', 'success');
+}
+
 async function pintar(root) {
   const d = await calcular();
   const cont = $('#reporteCont', root) || root;
@@ -250,7 +312,10 @@ export async function render(root) {
       el('button', { class: 'btn btn--success', text: '📊 Excel', onclick: expExcel }),
       el('button', { class: 'btn btn--danger', text: '📄 PDF', onclick: expPDF }),
       el('button', { class: 'btn btn--ghost', text: '📋 CSV', onclick: expCSV })
-    ])
+    ]),
+    el('h3', { style: 'margin-top:14px', text: '📑 Reporte ejecutivo' }),
+    el('p', { class: 'hint', text: 'Resumen consolidado del mes (clientes, ventas, utilidad, cobertura por zona e inventario), útil para evaluar el negocio o una posible asociación.' }),
+    el('button', { class: 'btn btn--primary btn--lg btn--block', text: '📑 Generar reporte ejecutivo (PDF)', onclick: async () => { try { await expEjecutivo(); } catch (e) { toast(e.message, 'error'); } } })
   ]));
 
   root.appendChild(el('div', { id: 'reporteCont' }, [el('div', { class: 'loading' }, [el('span', { class: 'spinner' }), 'Calculando…'])]));

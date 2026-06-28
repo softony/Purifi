@@ -4,7 +4,7 @@
 import { getConfig, setConfigBulk, resetAll, count, STORES } from '../db.js';
 import { el, $, toast, confirmar, setMoneda, dinero, esc, fechaHoraLegible } from '../utils.js';
 import {
-  exportarJSON, importarJSON, exportarExcelCompleto,
+  exportarJSON, compartirRespaldo, importarJSON, exportarExcelCompleto,
   obtenerRespaldoAutoInfo, restaurarRespaldoAuto, respaldoAutomatico
 } from '../export.js';
 
@@ -98,12 +98,21 @@ export async function render(root) {
 
   /* --- Exportar --- */
   root.appendChild(el('div', { class: 'card' }, [
-    el('h3', { text: '⬆️ Exportar datos' }),
-    el('p', { class: 'hint', text: 'Genera un respaldo completo o una hoja de cálculo con toda la información.' }),
+    el('h3', { text: '⬆️ Exportar y respaldar' }),
+    el('p', { class: 'hint', html: cfg.ultimoRespaldo ? `Último respaldo manual: <strong>${esc(fechaHoraLegible(cfg.ultimoRespaldo))}</strong>` : '⚠️ Aún no has hecho un respaldo. Tus datos viven solo en este dispositivo: respáldalos seguido y guárdalos fuera del teléfono.' }),
     el('div', { class: 'btn-row' }, [
-      el('button', { class: 'btn btn--primary btn--lg', text: '🗄️ Respaldo (JSON)', onclick: async () => { await exportarJSON(); toast('Respaldo descargado', 'success'); } }),
+      el('button', { class: 'btn btn--primary btn--lg', text: '📤 Enviar respaldo (WhatsApp/Drive/correo)', onclick: async () => {
+        try {
+          const r = await compartirRespaldo();
+          if (r.cancelado) return;
+          toast(r.compartido ? 'Respaldo compartido' : 'Respaldo descargado', 'success');
+          window.navegar('configuracion'); setTimeout(() => location.reload(), 400);
+        } catch (e) { toast('No se pudo compartir: ' + e.message, 'error'); }
+      } }),
+      el('button', { class: 'btn btn--ghost btn--lg', text: '🗄️ Descargar respaldo (JSON)', onclick: async () => { await exportarJSON(); toast('Respaldo descargado', 'success'); window.navegar('configuracion'); setTimeout(() => location.reload(), 400); } }),
       el('button', { class: 'btn btn--success btn--lg', text: '📊 Todo a Excel', onclick: async () => { try { await exportarExcelCompleto(); toast('Excel generado', 'success'); } catch (e) { toast(e.message, 'error'); } } })
-    ])
+    ]),
+    el('p', { class: 'hint', style: 'margin-top:8px', text: '💡 Recomendado: una vez por semana, envía el respaldo a tu WhatsApp o Google Drive. Así, si cambias o pierdes el celular, no pierdes la información.' })
   ]));
 
   /* --- Importar --- */
