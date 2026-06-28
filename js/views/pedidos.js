@@ -13,9 +13,16 @@ let _clientes = [];
 let _mapa = new Map();
 let _cfg = {};
 
-function estadoBadge(estado) {
-  const clase = estado === 'Entregado' ? 'badge--entreg' : 'badge--pend';
-  return el('span', { class: `badge ${clase}`, text: estado });
+function estadoCobroVal(p) {
+  if (!p || p.estado !== 'Entregado') return 'pendiente';
+  return p.pagado === false ? 'credito' : 'pagado';
+}
+
+/** Insignia que refleja los 3 estados: pendiente / entregado y pagado / entregado a crédito. */
+function estadoCobroBadge(p) {
+  if (p.estado !== 'Entregado') return el('span', { class: 'badge badge--pend', text: '🟠 Pendiente' });
+  if (p.pagado === false) return el('span', { class: 'badge badge--adeudo', text: '🔴 Entregado · A crédito' });
+  return el('span', { class: 'badge badge--entreg', text: '🟢 Entregado · Pagado' });
 }
 
 function tarjetaPedido(p) {
@@ -26,7 +33,7 @@ function tarjetaPedido(p) {
     el('div', { class: 'item__title', html: `${folio ? `<span class="num-inline">N.º ${folio}</span> ` : ''}${esc(nombre)} · ${numero(p.cantidad)} garrafón(es)` }),
     el('div', { class: 'item__meta', html: `${esc(fechaLegible(p.fecha))} · ${esc(p.metodoPago || '')} · <strong>${dinero(p.total)}</strong>` }),
     el('div', { class: 'tag-line mt' }, [
-      estadoBadge(p.estado),
+      estadoCobroBadge(p),
       p.observaciones ? el('span', { class: 'badge badge--info', text: '📝 ' + p.observaciones.slice(0, 20) }) : null
     ])
   ]);
@@ -42,11 +49,27 @@ function tarjetaPedido(p) {
   return el('div', { class: 'item' }, [main, actions]);
 }
 
-async function marcarEntregado(p) {
+function marcarEntregado(p) {
+  const cli = _mapa.get(p.clienteId);
+  const cont = el('div', {}, [
+    el('p', { class: 'confirm__msg', html: `Entrega para <strong>${esc(cli ? cli.nombre : 'cliente')}</strong> · ${numero(p.cantidad)} garrafón(es)<br>Total: <strong>${dinero(p.total)}</strong>` }),
+    el('p', { class: 'muted', text: '¿Se cobró este pedido al momento de entregar?' }),
+    el('div', { class: 'confirm__actions', style: 'flex-direction:column;gap:10px' }, [
+      el('button', { class: 'btn btn--success btn--lg', html: `💵 Sí, pagó (${dinero(p.total)})`, onclick: () => confirmarEntrega(p, true) }),
+      el('button', { class: 'btn btn--warn btn--lg', text: '🔴 No, quedó a crédito (debe)', onclick: () => confirmarEntrega(p, false) }),
+      el('button', { class: 'btn btn--ghost btn--lg', text: 'Cancelar', onclick: cerrarModal })
+    ])
+  ]);
+  abrirModal('Confirmar entrega', cont);
+}
+
+async function confirmarEntrega(p, pagado) {
   p.estado = 'Entregado';
+  p.pagado = pagado;
   p.entregadoEn = new Date().toISOString();
   await put(STORES.pedidos, p);
-  toast('Pedido marcado como entregado', 'success');
+  cerrarModal();
+  toast(pagado ? 'Entregado y cobrado ✔' : 'Entregado — se registró el adeudo en Cobranza', pagado ? 'success' : 'warn');
   await recargar();
 }
 
@@ -75,6 +98,7 @@ function formularioPedido(pedido = {}) {
   }
   const f = el('form', { class: 'form' });
   const precioDef = pedido.precioUnit != null ? pedido.precioUnit : _cfg.precioDomicilio;
+  const cobroActual = estadoCobroVal(pedido);
   f.innerHTML = `
     <div class="field">
       <label for="pCliente">Cliente *</label>
@@ -103,9 +127,11 @@ function formularioPedido(pedido = {}) {
     </div>
     <div class="field--row">
       <div class="field">
-        <label for="pEstado">Estado</label>
-        <select id="pEstado" name="estado">
-          ${ESTADOS_PEDIDO.map((x) => `<option ${pedido.estado === x ? 'selected' : ''}>${x}</option>`).join('')}
+        <label for="pCobro">Estado del pedido</label>
+        <select id="pCobro" name="cobro">
+          <option value="pendiente" ${cobroActual === 'pendiente' ? 'selected' : ''}>🟠 Pendiente (en camino)</option>
+          <option value="pagado" ${cobroActual === 'pagado' ? 'selected' : ''}>🟢 Entregado y pagado</option>
+          <option value="credito" ${cobroActual === 'credito' ? 'selected' : ''}>🔴 Entregado a crédito (debe)</option>
         </select>
       </div>
       <div class="field">
@@ -121,7 +147,7 @@ function formularioPedido(pedido = {}) {
     </div>
     <div class="card" style="margin:0;background:var(--azul-claro)">
       <div class="flex"><span class="grow"><strong>Total</strong></span><span id="pTotal" style="font-size:1.4rem;font-weight:800">$0</span></div>
-      <p class="hint" style="margin:6px 0 0">El crédito (adeudo) se reflejará automáticamente en Cobranza.</p>
+      <p class="hint" style="margin:6px 0 0">Si el pedido queda “a crédito”, el adeudo aparece automáticamente en Cobranza.</p>
     </div>
     <div class="form__actions">
       <button type="button" class="btn btn--ghost btn--lg grow" id="btnCancelar">Cancelar</button>
@@ -148,6 +174,13 @@ function formularioPedido(pedido = {}) {
     const precioUnit = Number(fd.precioUnit) || 0;
     if (cantidad < 1) { toast('La cantidad debe ser al menos 1', 'error'); return; }
 
+    // Estado de cobro (3 estados) -> estado + pagado
+    const cobro = fd.cobro || 'pendiente';
+    let estado = 'Pendiente';
+    let pagado = false;
+    if (cobro === 'pagado') { estado = 'Entregado'; pagado = true; }
+    else if (cobro === 'credito') { estado = 'Entregado'; pagado = false; }
+
     const registro = {
       ...pedido,
       clienteId: Number(fd.clienteId),
@@ -155,10 +188,13 @@ function formularioPedido(pedido = {}) {
       cantidad,
       precioUnit,
       total: Math.round(cantidad * precioUnit * 100) / 100,
-      estado: fd.estado,
+      estado,
+      pagado,
       metodoPago: fd.metodoPago,
       observaciones: (fd.observaciones || '').trim()
     };
+    if (estado === 'Entregado' && !registro.entregadoEn) registro.entregadoEn = new Date().toISOString();
+    if (estado === 'Pendiente') delete registro.entregadoEn;
     if (esEdit) {
       await put(STORES.pedidos, registro);
       toast('Pedido actualizado', 'success');

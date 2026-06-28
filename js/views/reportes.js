@@ -8,7 +8,7 @@ import {
 } from '../utils.js';
 import {
   ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes,
-  totalGastos, gastosPorCategoria
+  totalGastos, gastosPorCategoria, esVentaPedido
 } from '../services.js';
 import { exportarExcel, exportarPDF, exportarCSV } from '../export.js';
 
@@ -26,8 +26,10 @@ function rango(periodo) {
 
 async function calcular() {
   const { desde, hasta, titulo } = rango(_periodo);
-  const porDia = ventasPorDia(_pedidos, desde, hasta);
-  const enRango = filtrarPorFecha(_pedidos, desde, hasta);
+  // Solo se contabilizan como ventas los pedidos ya entregados.
+  const entregados = _pedidos.filter(esVentaPedido);
+  const porDia = ventasPorDia(entregados, desde, hasta);
+  const enRango = filtrarPorFecha(entregados, desde, hasta);
   const totalVentas = enRango.reduce((s, p) => s + (Number(p.total) || 0), 0);
   const totalGarrafones = enRango.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
 

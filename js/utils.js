@@ -180,7 +180,7 @@ export function descargarArchivo(nombre, contenido, mime) {
 }
 
 export const FRECUENCIAS = ['Diario', 'Cada 3 días', 'Semanal', 'Quincenal', 'Mensual'];
-export const METODOS_PAGO = ['Efectivo', 'Transferencia', 'Crédito (adeudo)'];
+export const METODOS_PAGO = ['Efectivo', 'Transferencia'];
 export const ESTADOS_PEDIDO = ['Pendiente', 'Entregado'];
 
 /** Categorías de gasto, basadas en los costos operativos reales del negocio. */

@@ -2,15 +2,32 @@
  * services.js — Lógica de negocio y consultas derivadas.
  * Centraliza cálculos de ventas, saldos y agrupaciones para evitar duplicación.
  *
- * Modelo de saldos (cobranza):
- *   CARGOS  = pedidos a crédito (total) + adeudos manuales (pagos.tipo='adeudo')
+ * Modelo de cobro (3 estados por pedido):
+ *   - Pendiente (en camino)        : estado='Pendiente'           → no es venta ni deuda
+ *   - Entregado y pagado           : estado='Entregado', pagado=true  → es venta cobrada
+ *   - Entregado a crédito (debe)   : estado='Entregado', pagado=false → es venta + adeudo
+ *
+ * Saldo (cobranza):
+ *   CARGOS  = pedidos entregados NO pagados (total) + adeudos manuales (pagos.tipo='adeudo')
  *   ABONOS  = pagos (pagos.tipo='pago')
  *   SALDO   = CARGOS - ABONOS   (positivo = el cliente debe)
+ *
+ * Ingresos (ventas): se cuentan cuando el pedido se ENTREGA (no al crearlo).
  */
 import { STORES, getAll, getByIndex } from './db.js';
 import { hoyISO, inicioSemanaISO, inicioMesISO } from './utils.js';
 
 export const CREDITO = 'Crédito (adeudo)';
+
+/** ¿El pedido genera adeudo? Entregado pero no cobrado. */
+export function esAdeudoPedido(p) {
+  return p && p.estado === 'Entregado' && p.pagado === false;
+}
+
+/** ¿El pedido cuenta como venta? Cuando ya fue entregado. */
+export function esVentaPedido(p) {
+  return p && p.estado === 'Entregado';
+}
 
 export async function mapaClientes() {
   const clientes = await getAll(STORES.clientes);
@@ -30,7 +47,7 @@ export async function saldoCliente(clienteId) {
     getByIndex(STORES.pagos, 'clienteId', clienteId)
   ]);
   let cargos = 0;
-  pedidos.forEach((p) => { if (p.metodoPago === CREDITO) cargos += Number(p.total) || 0; });
+  pedidos.forEach((p) => { if (esAdeudoPedido(p)) cargos += Number(p.total) || 0; });
   let abonos = 0;
   pagos.forEach((p) => {
     if (p.tipo === 'adeudo') cargos += Number(p.monto) || 0;
@@ -46,7 +63,7 @@ export async function saldosTodos() {
   ]);
   const saldo = new Map();
   const add = (id, v) => saldo.set(id, (saldo.get(id) || 0) + v);
-  pedidos.forEach((p) => { if (p.metodoPago === CREDITO) add(p.clienteId, Number(p.total) || 0); });
+  pedidos.forEach((p) => { if (esAdeudoPedido(p)) add(p.clienteId, Number(p.total) || 0); });
   pagos.forEach((p) => {
     if (p.tipo === 'adeudo') add(p.clienteId, Number(p.monto) || 0);
     else add(p.clienteId, -(Number(p.monto) || 0));
@@ -76,10 +93,14 @@ export async function resumenDashboard() {
   const pedidosHoy = filtrarPorFecha(pedidos, hoy, hoy);
   const pedidosSemana = filtrarPorFecha(pedidos, lunes, hoy);
 
-  const ventasDia = pedidosHoy.reduce((s, p) => s + (Number(p.total) || 0), 0);
-  const ventasSemana = pedidosSemana.reduce((s, p) => s + (Number(p.total) || 0), 0);
-  const garrafonesTotal = pedidos.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
-  const garrafonesHoy = pedidosHoy.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  // Las ventas (ingresos) y garrafones vendidos cuentan solo lo ya ENTREGADO.
+  const entregadosHoy = pedidosHoy.filter(esVentaPedido);
+  const entregadosSemana = pedidosSemana.filter(esVentaPedido);
+
+  const ventasDia = entregadosHoy.reduce((s, p) => s + (Number(p.total) || 0), 0);
+  const ventasSemana = entregadosSemana.reduce((s, p) => s + (Number(p.total) || 0), 0);
+  const garrafonesTotal = pedidos.filter(esVentaPedido).reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  const garrafonesHoy = entregadosHoy.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
 
   let adeudoTotal = 0; let clientesConAdeudo = 0;
   for (const v of saldos.values()) { if (v > 0.001) { adeudoTotal += v; clientesConAdeudo++; } }
