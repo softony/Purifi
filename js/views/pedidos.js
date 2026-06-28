@@ -1,7 +1,7 @@
 /**
  * pedidos.js — Registro y seguimiento de pedidos de garrafones.
  */
-import { STORES, getAll, add, put, remove, getConfig } from '../db.js';
+import { STORES, getAll, add, put, remove, getByIndex, getConfig } from '../db.js';
 import {
   el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
   dinero, numero, hoyISO, fechaLegible, METODOS_PAGO, ESTADOS_PEDIDO, folioCliente
@@ -34,6 +34,7 @@ function tarjetaPedido(p) {
     el('div', { class: 'item__meta', html: `${esc(fechaLegible(p.fecha))} · ${esc(p.metodoPago || '')} · <strong>${dinero(p.total)}</strong>` }),
     el('div', { class: 'tag-line mt' }, [
       estadoCobroBadge(p),
+      p.canjeCantidad ? el('span', { class: 'badge badge--info', text: `🔄 ${p.canjeCantidad} canje` }) : null,
       p.observaciones ? el('span', { class: 'badge badge--info', text: '📝 ' + p.observaciones.slice(0, 20) }) : null
     ])
   ]);
@@ -68,6 +69,7 @@ async function confirmarEntrega(p, pagado) {
   p.pagado = pagado;
   p.entregadoEn = new Date().toISOString();
   await put(STORES.pedidos, p);
+  await sincronizarCanje(p);
   cerrarModal();
   toast(pagado ? 'Entregado y cobrado ✔' : 'Entregado — se registró el adeudo en Cobranza', pagado ? 'success' : 'warn');
   await recargar();
@@ -77,16 +79,40 @@ async function eliminarPedido(p) {
   const ok = await confirmar('¿Eliminar este pedido?', { ok: 'Eliminar', peligro: true });
   if (!ok) return;
   await remove(STORES.pedidos, p.id);
+  const movs = await getByIndex(STORES.inventario, 'pedidoId', p.id);
+  await Promise.all(movs.map((m) => remove(STORES.inventario, m.id)));
   toast('Pedido eliminado', 'success');
   await recargar();
 }
 
-function calcularTotal(form) {
-  const cant = Number(form.cantidad.value) || 0;
-  const precio = Number(form.precioUnit.value) || 0;
-  const total = cant * precio;
-  form.querySelector('#pTotal').textContent = dinero(total);
+function calcularTotal(f, precioCanje) {
+  const cant = Number(f.querySelector('#pCantidad').value) || 0;
+  const precio = Number(f.querySelector('#pPrecio').value) || 0;
+  const canje = Number(f.querySelector('#pCanje') ? f.querySelector('#pCanje').value : 0) || 0;
+  const total = cant * precio + canje * (Number(precioCanje) || 0);
+  f.querySelector('#pTotal').textContent = dinero(total);
   return total;
+}
+
+/** Sincroniza el movimiento de inventario por canje ligado a un pedido. */
+async function sincronizarCanje(pedido) {
+  if (!pedido || pedido.id == null) return;
+  const previos = await getByIndex(STORES.inventario, 'pedidoId', pedido.id);
+  await Promise.all(previos.map((m) => remove(STORES.inventario, m.id)));
+  const qty = Math.max(0, Math.floor(Number(pedido.canjeCantidad) || 0));
+  if (pedido.estado === 'Entregado' && qty > 0) {
+    await add(STORES.inventario, {
+      fecha: (pedido.entregadoEn || '').slice(0, 10) || pedido.fecha || hoyISO(),
+      tipo: 'Canje',
+      cantidad: qty,
+      nuevos: -qty,
+      usados: qty,
+      concepto: 'Canje de garrafón (pedido entregado)',
+      pedidoId: pedido.id,
+      clienteId: pedido.clienteId,
+      creadoEn: new Date().toISOString()
+    });
+  }
 }
 
 function formularioPedido(pedido = {}) {
@@ -125,6 +151,11 @@ function formularioPedido(pedido = {}) {
       </div>
       <input id="pPrecio" name="precioUnit" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(precioDef)}" />
     </div>
+    <div class="field">
+      <label for="pCanje">Garrafones en canje (cambio por uno nuevo)</label>
+      <input id="pCanje" name="canjeCantidad" type="number" min="0" step="1" inputmode="numeric" value="${esc(pedido.canjeCantidad || 0)}" />
+      <p class="hint" style="margin:4px 0 0">Cada canje suma ${dinero(_cfg.precioCanje)} al total y, al entregar, descuenta 1 garrafón nuevo del inventario.</p>
+    </div>
     <div class="field--row">
       <div class="field">
         <label for="pCobro">Estado del pedido</label>
@@ -157,13 +188,14 @@ function formularioPedido(pedido = {}) {
 
   const inputPrecio = f.querySelector('#pPrecio');
   const inputCant = f.querySelector('#pCantidad');
-  const fakeForm = { cantidad: inputCant, precioUnit: inputPrecio, querySelector: (s) => f.querySelector(s) };
-  const recalc = () => calcularTotal(fakeForm);
+  const inputCanje = f.querySelector('#pCanje');
+  const recalc = () => calcularTotal(f, _cfg.precioCanje);
 
   f.querySelectorAll('[data-precio]').forEach((b) =>
     b.addEventListener('click', () => { inputPrecio.value = b.dataset.precio; recalc(); }));
   inputPrecio.addEventListener('input', recalc);
   inputCant.addEventListener('input', recalc);
+  inputCanje.addEventListener('input', recalc);
   f.querySelector('#btnCancelar').addEventListener('click', cerrarModal);
 
   f.addEventListener('submit', async (e) => {
@@ -181,13 +213,18 @@ function formularioPedido(pedido = {}) {
     if (cobro === 'pagado') { estado = 'Entregado'; pagado = true; }
     else if (cobro === 'credito') { estado = 'Entregado'; pagado = false; }
 
+    const canjeCantidad = Math.max(0, Math.floor(Number(fd.canjeCantidad) || 0));
+    const precioCanje = Number(_cfg.precioCanje) || 0;
+
     const registro = {
       ...pedido,
       clienteId: Number(fd.clienteId),
       fecha: fd.fecha,
       cantidad,
       precioUnit,
-      total: Math.round(cantidad * precioUnit * 100) / 100,
+      canjeCantidad,
+      precioCanje,
+      total: Math.round((cantidad * precioUnit + canjeCantidad * precioCanje) * 100) / 100,
       estado,
       pagado,
       metodoPago: fd.metodoPago,
@@ -195,12 +232,16 @@ function formularioPedido(pedido = {}) {
     };
     if (estado === 'Entregado' && !registro.entregadoEn) registro.entregadoEn = new Date().toISOString();
     if (estado === 'Pendiente') delete registro.entregadoEn;
+
     if (esEdit) {
       await put(STORES.pedidos, registro);
+      await sincronizarCanje(registro);
       toast('Pedido actualizado', 'success');
     } else {
       registro.creadoEn = new Date().toISOString();
-      await add(STORES.pedidos, registro);
+      const nuevoId = await add(STORES.pedidos, registro);
+      registro.id = nuevoId;
+      await sincronizarCanje(registro);
       toast('Pedido registrado', 'success');
     }
     cerrarModal();

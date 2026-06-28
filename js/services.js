@@ -189,6 +189,14 @@ export async function clientesPorColonia() {
     .map(([zona, lista]) => [zona, lista.sort((a, b) => (a.calle || '').localeCompare(b.calle || '', 'es'))]);
 }
 
+/** Existencias de garrafones (nuevos / usados) calculadas desde los movimientos. */
+export async function stockGarrafones() {
+  const movs = await getAll(STORES.inventario);
+  let nuevos = 0, usados = 0;
+  movs.forEach((m) => { nuevos += Number(m.nuevos) || 0; usados += Number(m.usados) || 0; });
+  return { nuevos: Math.round(nuevos), usados: Math.round(usados), total: Math.round(nuevos + usados) };
+}
+
 /** Ventas agregadas por día dentro de un rango. */
 export function ventasPorDia(pedidos, desdeISO, hastaISO) {
   const map = new Map();

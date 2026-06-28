@@ -14,6 +14,7 @@ import * as rutas from './views/rutas.js';
 import * as seguimiento from './views/seguimiento.js';
 import * as gastos from './views/gastos.js';
 import * as mantenimiento from './views/mantenimiento.js';
+import * as inventario from './views/inventario.js';
 import * as reportes from './views/reportes.js';
 import * as configuracion from './views/configuracion.js';
 
@@ -26,6 +27,7 @@ const ROUTES = {
   seguimiento: { title: 'Seguimiento', mod: seguimiento },
   gastos: { title: 'Gastos', mod: gastos },
   mantenimiento: { title: 'Mantenimiento', mod: mantenimiento },
+  inventario: { title: 'Inventario', mod: inventario },
   reportes: { title: 'Reportes', mod: reportes },
   configuracion: { title: 'Configuración', mod: configuracion }
 };

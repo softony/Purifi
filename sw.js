@@ -1,5 +1,5 @@
 /* AquaGestión Service Worker — offline-first cache */
-const CACHE_VERSION = 'aquagestion-v10';
+const CACHE_VERSION = 'aquagestion-v11';
 // Nota: NO se incluye './index.html' a propósito. En Cloudflare Pages (y Netlify)
 // '/index.html' responde con una redirección 308 hacia '/', y la Cache API rechaza
 // toda la operación addAll cuando un recurso redirige, lo que rompía el modo offline
@@ -21,6 +21,7 @@ const ASSETS = [
   './js/views/seguimiento.js',
   './js/views/gastos.js',
   './js/views/mantenimiento.js',
+  './js/views/inventario.js',
   './js/views/reportes.js',
   './js/views/configuracion.js',
   './vendor/xlsx.full.min.js',

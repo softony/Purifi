@@ -216,6 +216,15 @@ export const DIAS_CAMBIO_FILTROS = 30;
 /** Capacidad/máximo histórico de garrafones en un día (diagnóstico). */
 export const CAPACIDAD_DIARIA = 180;
 
+/** Tipos de movimiento del inventario de garrafones. */
+export const INVENTARIO_TIPOS = [
+  'Compra de nuevos',
+  'Canje',
+  'Retorno de usado',
+  'Baja / reciclado',
+  'Ajuste'
+];
+
 /** Días estimados según frecuencia, para sugerencias de ruta. */
 export const FRECUENCIA_DIAS = {
   'Diario': 1,
