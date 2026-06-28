@@ -1,7 +1,7 @@
 /**
  * dashboard.js — Vista principal con indicadores clave (KPIs).
  */
-import { el, dinero, numero, hoyISO, fechaLegible } from '../utils.js';
+import { el, dinero, numero, hoyISO, fechaLegible, CAPACIDAD_DIARIA } from '../utils.js';
 import { resumenDashboard, seguimientoClientes } from '../services.js';
 import { getConfig } from '../db.js';
 
@@ -42,6 +42,28 @@ export async function render(root) {
     kpi('⏳', 'Pedidos pendientes', numero(r.pendientes), 'naranja')
   ]);
   root.appendChild(grid2);
+
+  // Indicadores ampliados (KPIs de gestión)
+  const pct = Math.min(100, Math.round((r.garrafonesHoy / CAPACIDAD_DIARIA) * 100));
+  const ociosa = Math.max(0, CAPACIDAD_DIARIA - r.garrafonesHoy);
+  const indicadores = el('div', { class: 'card' }, [
+    el('h3', { text: '📊 Indicadores de gestión' }),
+    el('div', { class: 'mini-grid' }, [
+      el('div', { class: 'mini' }, [el('div', { class: 'mini__valor', text: dinero(r.ticketPromedio) }), el('div', { class: 'mini__label', text: 'Ticket promedio (semana)' })]),
+      el('div', { class: 'mini' }, [el('div', { class: 'mini__valor', text: numero(r.garrafonesSemana) }), el('div', { class: 'mini__label', text: 'Garrafones de la semana' })]),
+      el('div', { class: 'mini' }, [el('div', { class: 'mini__valor', text: `${Math.round(r.pctConAdeudo)}%` }), el('div', { class: 'mini__label', text: 'Cartera con adeudo' })]),
+      el('div', { class: 'mini' }, [el('div', { class: 'mini__valor', text: numero(r.pedidosEntregadosSemana) }), el('div', { class: 'mini__label', text: 'Pedidos entregados (semana)' })])
+    ]),
+    el('div', { style: 'margin-top:14px' }, [
+      el('div', { class: 'flex', style: 'justify-content:space-between;margin-bottom:4px' }, [
+        el('span', { html: '<strong>Capacidad usada hoy</strong>' }),
+        el('span', { text: `${numero(r.garrafonesHoy)} / ${numero(CAPACIDAD_DIARIA)} garrafones` })
+      ]),
+      el('div', { class: 'barra' }, [el('div', { class: `barra__fill ${pct >= 80 ? 'barra__fill--alto' : ''}`, style: `width:${pct}%` })]),
+      el('p', { class: 'muted', style: 'margin:6px 0 0', text: `${pct}% de la capacidad · capacidad ociosa: ${numero(ociosa)} garrafón(es). ${pct < 60 ? 'Hay margen para crecer la demanda.' : ''}` })
+    ])
+  ]);
+  root.appendChild(indicadores);
 
   // Alertas / avisos
   const avisos = el('div', { class: 'card' }, [ el('h3', { text: 'Resumen rápido' }) ]);

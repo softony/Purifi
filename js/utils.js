@@ -213,6 +213,9 @@ export const MANTENIMIENTO_TIPOS = [
 /** Días recomendados entre cambios de filtro (mantenimiento preventivo). */
 export const DIAS_CAMBIO_FILTROS = 30;
 
+/** Capacidad/máximo histórico de garrafones en un día (diagnóstico). */
+export const CAPACIDAD_DIARIA = 180;
+
 /** Días estimados según frecuencia, para sugerencias de ruta. */
 export const FRECUENCIA_DIAS = {
   'Diario': 1,

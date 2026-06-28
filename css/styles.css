@@ -232,6 +232,16 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 }
 .balance__row--total strong { font-weight: 800; }
 
+/* ---------- Indicadores de gestión (Dashboard) ---------- */
+.mini-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 720px) { .mini-grid { grid-template-columns: repeat(4, 1fr); } }
+.mini { background: var(--azul-claro); border-radius: var(--radio-sm); padding: 10px 12px; }
+.mini__valor { font-size: 1.3rem; font-weight: 800; color: var(--azul-osc); }
+.mini__label { font-size: .78rem; color: var(--gris-sec); margin-top: 2px; }
+.barra { height: 14px; background: #e0e0e0; border-radius: 999px; overflow: hidden; }
+.barra__fill { height: 100%; background: var(--azul-medio); border-radius: 999px; transition: width .4s ease; }
+.barra__fill--alto { background: var(--verde, #2e7d32); }
+
 /* ---------- Badges / chips ---------- */
 .badge {
   display: inline-block; padding: 3px 10px; border-radius: 999px;

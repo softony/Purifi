@@ -107,12 +107,21 @@ export async function resumenDashboard() {
 
   const pendientes = pedidos.filter((p) => p.estado === 'Pendiente').length;
 
+  // KPIs ampliados
+  const garrafonesSemana = entregadosSemana.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  const pedidosEntregadosSemana = entregadosSemana.length;
+  const ticketPromedio = pedidosEntregadosSemana ? ventasSemana / pedidosEntregadosSemana : 0;
+  const pctConAdeudo = clientes.length ? (clientesConAdeudo / clientes.length) * 100 : 0;
+
   return {
     ventasDia, ventasSemana,
     clientesActivos: clientes.length,
     adeudoTotal, clientesConAdeudo,
-    garrafonesTotal, garrafonesHoy,
+    garrafonesTotal, garrafonesHoy, garrafonesSemana,
     pedidosHoy: pedidosHoy.length,
+    pedidosEntregadosSemana,
+    ticketPromedio,
+    pctConAdeudo,
     pendientes
   };
 }
