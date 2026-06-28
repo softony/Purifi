@@ -106,6 +106,13 @@ export function diasEntre(isoA, isoB) {
   return Math.round((b - a) / 86400000);
 }
 
+/** Suma (o resta) días a una fecha YYYY-MM-DD y devuelve YYYY-MM-DD. */
+export function sumarDiasISO(iso, n) {
+  const d = new Date((iso || hoyISO()) + 'T00:00:00');
+  d.setDate(d.getDate() + (Number(n) || 0));
+  return hoyISO(d);
+}
+
 export function nombreMes(ref = new Date()) {
   return ref.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
 }
@@ -193,6 +200,18 @@ export const GASTO_CATEGORIAS = [
   'Servicios (luz, agua)',
   'Otros'
 ];
+
+/** Tipos de registro en la bitácora de mantenimiento y calidad. */
+export const MANTENIMIENTO_TIPOS = [
+  'Cambio de filtros',
+  'Mantenimiento preventivo',
+  'Reparación',
+  'Prueba de calidad',
+  'Otro'
+];
+
+/** Días recomendados entre cambios de filtro (mantenimiento preventivo). */
+export const DIAS_CAMBIO_FILTROS = 30;
 
 /** Días estimados según frecuencia, para sugerencias de ruta. */
 export const FRECUENCIA_DIAS = {
