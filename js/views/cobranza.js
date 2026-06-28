@@ -6,7 +6,7 @@ import {
   el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
   dinero, hoyISO, fechaLegible
 } from '../utils.js';
-import { saldosTodos, CREDITO } from '../services.js';
+import { saldosTodos, esAdeudoPedido } from '../services.js';
 
 let _clientes = [];
 let _saldos = new Map();
@@ -82,8 +82,8 @@ async function verHistorial(cliente) {
 
   const movimientos = [];
   pedidos.forEach((p) => {
-    if (p.metodoPago === CREDITO) {
-      movimientos.push({ fecha: p.fecha, tipo: 'cargo', etiqueta: `Pedido a crédito (${p.cantidad} garrafón/es)`, monto: Number(p.total) || 0 });
+    if (esAdeudoPedido(p)) {
+      movimientos.push({ fecha: (p.entregadoEn || '').slice(0, 10) || p.fecha, tipo: 'cargo', etiqueta: `Pedido entregado a crédito (${p.cantidad} garrafón/es)`, monto: Number(p.total) || 0 });
     }
   });
   pagos.forEach((p) => {

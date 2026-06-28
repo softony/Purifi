@@ -1,10 +1,10 @@
 /**
  * pedidos.js — Registro y seguimiento de pedidos de garrafones.
  */
-import { STORES, getAll, add, put, remove, getConfig } from '../db.js';
+import { STORES, getAll, add, put, remove, getByIndex, getConfig } from '../db.js';
 import {
   el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
-  dinero, numero, hoyISO, fechaLegible, METODOS_PAGO, ESTADOS_PEDIDO
+  dinero, numero, hoyISO, fechaLegible, METODOS_PAGO, ESTADOS_PEDIDO, folioCliente
 } from '../utils.js';
 import { mapaClientes } from '../services.js';
 
@@ -13,19 +13,28 @@ let _clientes = [];
 let _mapa = new Map();
 let _cfg = {};
 
-function estadoBadge(estado) {
-  const clase = estado === 'Entregado' ? 'badge--entreg' : 'badge--pend';
-  return el('span', { class: `badge ${clase}`, text: estado });
+function estadoCobroVal(p) {
+  if (!p || p.estado !== 'Entregado') return 'pendiente';
+  return p.pagado === false ? 'credito' : 'pagado';
+}
+
+/** Insignia que refleja los 3 estados: pendiente / entregado y pagado / entregado a crédito. */
+function estadoCobroBadge(p) {
+  if (p.estado !== 'Entregado') return el('span', { class: 'badge badge--pend', text: '🟠 Pendiente' });
+  if (p.pagado === false) return el('span', { class: 'badge badge--adeudo', text: '🔴 Entregado · A crédito' });
+  return el('span', { class: 'badge badge--entreg', text: '🟢 Entregado · Pagado' });
 }
 
 function tarjetaPedido(p) {
   const cli = _mapa.get(p.clienteId);
   const nombre = cli ? cli.nombre : '— Cliente eliminado —';
+  const folio = cli ? folioCliente(cli) : null;
   const main = el('div', { class: 'item__main' }, [
-    el('div', { class: 'item__title', text: `${nombre} · ${numero(p.cantidad)} garrafón(es)` }),
+    el('div', { class: 'item__title', html: `${folio ? `<span class="num-inline">N.º ${folio}</span> ` : ''}${esc(nombre)} · ${numero(p.cantidad)} garrafón(es)` }),
     el('div', { class: 'item__meta', html: `${esc(fechaLegible(p.fecha))} · ${esc(p.metodoPago || '')} · <strong>${dinero(p.total)}</strong>` }),
     el('div', { class: 'tag-line mt' }, [
-      estadoBadge(p.estado),
+      estadoCobroBadge(p),
+      p.canjeCantidad ? el('span', { class: 'badge badge--info', text: `🔄 ${p.canjeCantidad} canje` }) : null,
       p.observaciones ? el('span', { class: 'badge badge--info', text: '📝 ' + p.observaciones.slice(0, 20) }) : null
     ])
   ]);
@@ -41,11 +50,28 @@ function tarjetaPedido(p) {
   return el('div', { class: 'item' }, [main, actions]);
 }
 
-async function marcarEntregado(p) {
+function marcarEntregado(p) {
+  const cli = _mapa.get(p.clienteId);
+  const cont = el('div', {}, [
+    el('p', { class: 'confirm__msg', html: `Entrega para <strong>${esc(cli ? cli.nombre : 'cliente')}</strong> · ${numero(p.cantidad)} garrafón(es)<br>Total: <strong>${dinero(p.total)}</strong>` }),
+    el('p', { class: 'muted', text: '¿Se cobró este pedido al momento de entregar?' }),
+    el('div', { class: 'confirm__actions', style: 'flex-direction:column;gap:10px' }, [
+      el('button', { class: 'btn btn--success btn--lg', html: `💵 Sí, pagó (${dinero(p.total)})`, onclick: () => confirmarEntrega(p, true) }),
+      el('button', { class: 'btn btn--warn btn--lg', text: '🔴 No, quedó a crédito (debe)', onclick: () => confirmarEntrega(p, false) }),
+      el('button', { class: 'btn btn--ghost btn--lg', text: 'Cancelar', onclick: cerrarModal })
+    ])
+  ]);
+  abrirModal('Confirmar entrega', cont);
+}
+
+async function confirmarEntrega(p, pagado) {
   p.estado = 'Entregado';
+  p.pagado = pagado;
   p.entregadoEn = new Date().toISOString();
   await put(STORES.pedidos, p);
-  toast('Pedido marcado como entregado', 'success');
+  await sincronizarCanje(p);
+  cerrarModal();
+  toast(pagado ? 'Entregado y cobrado ✔' : 'Entregado — se registró el adeudo en Cobranza', pagado ? 'success' : 'warn');
   await recargar();
 }
 
@@ -53,16 +79,40 @@ async function eliminarPedido(p) {
   const ok = await confirmar('¿Eliminar este pedido?', { ok: 'Eliminar', peligro: true });
   if (!ok) return;
   await remove(STORES.pedidos, p.id);
+  const movs = await getByIndex(STORES.inventario, 'pedidoId', p.id);
+  await Promise.all(movs.map((m) => remove(STORES.inventario, m.id)));
   toast('Pedido eliminado', 'success');
   await recargar();
 }
 
-function calcularTotal(form) {
-  const cant = Number(form.cantidad.value) || 0;
-  const precio = Number(form.precioUnit.value) || 0;
-  const total = cant * precio;
-  form.querySelector('#pTotal').textContent = dinero(total);
+function calcularTotal(f, precioCanje) {
+  const cant = Number(f.querySelector('#pCantidad').value) || 0;
+  const precio = Number(f.querySelector('#pPrecio').value) || 0;
+  const canje = Number(f.querySelector('#pCanje') ? f.querySelector('#pCanje').value : 0) || 0;
+  const total = cant * precio + canje * (Number(precioCanje) || 0);
+  f.querySelector('#pTotal').textContent = dinero(total);
   return total;
+}
+
+/** Sincroniza el movimiento de inventario por canje ligado a un pedido. */
+async function sincronizarCanje(pedido) {
+  if (!pedido || pedido.id == null) return;
+  const previos = await getByIndex(STORES.inventario, 'pedidoId', pedido.id);
+  await Promise.all(previos.map((m) => remove(STORES.inventario, m.id)));
+  const qty = Math.max(0, Math.floor(Number(pedido.canjeCantidad) || 0));
+  if (pedido.estado === 'Entregado' && qty > 0) {
+    await add(STORES.inventario, {
+      fecha: (pedido.entregadoEn || '').slice(0, 10) || pedido.fecha || hoyISO(),
+      tipo: 'Canje',
+      cantidad: qty,
+      nuevos: -qty,
+      usados: qty,
+      concepto: 'Canje de garrafón (pedido entregado)',
+      pedidoId: pedido.id,
+      clienteId: pedido.clienteId,
+      creadoEn: new Date().toISOString()
+    });
+  }
 }
 
 function formularioPedido(pedido = {}) {
@@ -74,12 +124,13 @@ function formularioPedido(pedido = {}) {
   }
   const f = el('form', { class: 'form' });
   const precioDef = pedido.precioUnit != null ? pedido.precioUnit : _cfg.precioDomicilio;
+  const cobroActual = estadoCobroVal(pedido);
   f.innerHTML = `
     <div class="field">
       <label for="pCliente">Cliente *</label>
       <select id="pCliente" name="clienteId" required>
         <option value="">Selecciona…</option>
-        ${_clientes.map((c) => `<option value="${c.id}" ${pedido.clienteId === c.id ? 'selected' : ''}>${esc(c.nombre)}${c.colonia ? ' — ' + esc(c.colonia) : ''}</option>`).join('')}
+        ${_clientes.map((c) => `<option value="${c.id}" ${pedido.clienteId === c.id ? 'selected' : ''}>N.º ${folioCliente(c)} · ${esc(c.nombre)}${c.colonia ? ' — ' + esc(c.colonia) : ''}</option>`).join('')}
       </select>
     </div>
     <div class="field--row">
@@ -100,11 +151,18 @@ function formularioPedido(pedido = {}) {
       </div>
       <input id="pPrecio" name="precioUnit" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(precioDef)}" />
     </div>
+    <div class="field">
+      <label for="pCanje">Garrafones en canje (cambio por uno nuevo)</label>
+      <input id="pCanje" name="canjeCantidad" type="number" min="0" step="1" inputmode="numeric" value="${esc(pedido.canjeCantidad || 0)}" />
+      <p class="hint" style="margin:4px 0 0">Cada canje suma ${dinero(_cfg.precioCanje)} al total y, al entregar, descuenta 1 garrafón nuevo del inventario.</p>
+    </div>
     <div class="field--row">
       <div class="field">
-        <label for="pEstado">Estado</label>
-        <select id="pEstado" name="estado">
-          ${ESTADOS_PEDIDO.map((x) => `<option ${pedido.estado === x ? 'selected' : ''}>${x}</option>`).join('')}
+        <label for="pCobro">Estado del pedido</label>
+        <select id="pCobro" name="cobro">
+          <option value="pendiente" ${cobroActual === 'pendiente' ? 'selected' : ''}>🟠 Pendiente (en camino)</option>
+          <option value="pagado" ${cobroActual === 'pagado' ? 'selected' : ''}>🟢 Entregado y pagado</option>
+          <option value="credito" ${cobroActual === 'credito' ? 'selected' : ''}>🔴 Entregado a crédito (debe)</option>
         </select>
       </div>
       <div class="field">
@@ -120,7 +178,7 @@ function formularioPedido(pedido = {}) {
     </div>
     <div class="card" style="margin:0;background:var(--azul-claro)">
       <div class="flex"><span class="grow"><strong>Total</strong></span><span id="pTotal" style="font-size:1.4rem;font-weight:800">$0</span></div>
-      <p class="hint" style="margin:6px 0 0">El crédito (adeudo) se reflejará automáticamente en Cobranza.</p>
+      <p class="hint" style="margin:6px 0 0">Si el pedido queda “a crédito”, el adeudo aparece automáticamente en Cobranza.</p>
     </div>
     <div class="form__actions">
       <button type="button" class="btn btn--ghost btn--lg grow" id="btnCancelar">Cancelar</button>
@@ -130,13 +188,14 @@ function formularioPedido(pedido = {}) {
 
   const inputPrecio = f.querySelector('#pPrecio');
   const inputCant = f.querySelector('#pCantidad');
-  const fakeForm = { cantidad: inputCant, precioUnit: inputPrecio, querySelector: (s) => f.querySelector(s) };
-  const recalc = () => calcularTotal(fakeForm);
+  const inputCanje = f.querySelector('#pCanje');
+  const recalc = () => calcularTotal(f, _cfg.precioCanje);
 
   f.querySelectorAll('[data-precio]').forEach((b) =>
     b.addEventListener('click', () => { inputPrecio.value = b.dataset.precio; recalc(); }));
   inputPrecio.addEventListener('input', recalc);
   inputCant.addEventListener('input', recalc);
+  inputCanje.addEventListener('input', recalc);
   f.querySelector('#btnCancelar').addEventListener('click', cerrarModal);
 
   f.addEventListener('submit', async (e) => {
@@ -147,23 +206,42 @@ function formularioPedido(pedido = {}) {
     const precioUnit = Number(fd.precioUnit) || 0;
     if (cantidad < 1) { toast('La cantidad debe ser al menos 1', 'error'); return; }
 
+    // Estado de cobro (3 estados) -> estado + pagado
+    const cobro = fd.cobro || 'pendiente';
+    let estado = 'Pendiente';
+    let pagado = false;
+    if (cobro === 'pagado') { estado = 'Entregado'; pagado = true; }
+    else if (cobro === 'credito') { estado = 'Entregado'; pagado = false; }
+
+    const canjeCantidad = Math.max(0, Math.floor(Number(fd.canjeCantidad) || 0));
+    const precioCanje = Number(_cfg.precioCanje) || 0;
+
     const registro = {
       ...pedido,
       clienteId: Number(fd.clienteId),
       fecha: fd.fecha,
       cantidad,
       precioUnit,
-      total: Math.round(cantidad * precioUnit * 100) / 100,
-      estado: fd.estado,
+      canjeCantidad,
+      precioCanje,
+      total: Math.round((cantidad * precioUnit + canjeCantidad * precioCanje) * 100) / 100,
+      estado,
+      pagado,
       metodoPago: fd.metodoPago,
       observaciones: (fd.observaciones || '').trim()
     };
+    if (estado === 'Entregado' && !registro.entregadoEn) registro.entregadoEn = new Date().toISOString();
+    if (estado === 'Pendiente') delete registro.entregadoEn;
+
     if (esEdit) {
       await put(STORES.pedidos, registro);
+      await sincronizarCanje(registro);
       toast('Pedido actualizado', 'success');
     } else {
       registro.creadoEn = new Date().toISOString();
-      await add(STORES.pedidos, registro);
+      const nuevoId = await add(STORES.pedidos, registro);
+      registro.id = nuevoId;
+      await sincronizarCanje(registro);
       toast('Pedido registrado', 'success');
     }
     cerrarModal();
@@ -184,7 +262,9 @@ function aplicarFiltros() {
   if (estado) lista = lista.filter((p) => p.estado === estado);
   if (q) lista = lista.filter((p) => {
     const cli = _mapa.get(p.clienteId);
-    return (cli?.nombre || '').toLowerCase().includes(q) || (p.observaciones || '').toLowerCase().includes(q);
+    return (cli?.nombre || '').toLowerCase().includes(q)
+      || (cli ? folioCliente(cli) : '').includes(q)
+      || (p.observaciones || '').toLowerCase().includes(q);
   });
   lista.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '') || (b.id - a.id));
 
@@ -216,7 +296,7 @@ export async function render(root, params = []) {
   ]));
 
   const toolbar = el('div', { class: 'toolbar' }, [
-    el('input', { id: 'buscarPedido', class: 'search', type: 'search', placeholder: '🔍 Buscar por cliente u observación', oninput: debounce(aplicarFiltros, 200) }),
+    el('input', { id: 'buscarPedido', class: 'search', type: 'search', placeholder: '🔍 Buscar por cliente, N.º u observación', oninput: debounce(aplicarFiltros, 200) }),
     (() => {
       const s = el('select', { id: 'filtroEstado', onchange: aplicarFiltros });
       s.innerHTML = '<option value="">Todos</option>' + ESTADOS_PEDIDO.map((x) => `<option>${x}</option>`).join('');
@@ -229,5 +309,5 @@ export async function render(root, params = []) {
   root.appendChild(el('button', { class: 'fab', title: 'Nuevo pedido', text: '＋', onclick: () => formularioPedido() }));
 
   aplicarFiltros();
-  if (params[0] === 'nuevo') formularioPedido();
+  if (params[0] === 'nuevo') formularioPedido(params[1] ? { clienteId: Number(params[1]) } : {});
 }

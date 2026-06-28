@@ -54,6 +54,17 @@ export function numero(n) {
   return new Intl.NumberFormat('es-MX').format(Number(n) || 0);
 }
 
+/**
+ * Número de cliente legible para rotular (marcador/plumón) la parte baja del
+ * garrafón y poder rastrear de qué cliente provino la última vez. Se basa en el
+ * id único que la base de datos asigna automáticamente, por lo que es estable
+ * y no se repite. Devuelve null si el cliente aún no tiene id (sin guardar).
+ */
+export function folioCliente(c) {
+  if (!c || c.id == null) return null;
+  return String(c.id).padStart(3, '0');
+}
+
 /* ---------- Fechas ---------- */
 /** Devuelve 'YYYY-MM-DD' en hora local. */
 export function hoyISO(d = new Date()) {
@@ -93,6 +104,13 @@ export function diasEntre(isoA, isoB) {
   const a = new Date(isoA + 'T00:00:00');
   const b = new Date(isoB + 'T00:00:00');
   return Math.round((b - a) / 86400000);
+}
+
+/** Suma (o resta) días a una fecha YYYY-MM-DD y devuelve YYYY-MM-DD. */
+export function sumarDiasISO(iso, n) {
+  const d = new Date((iso || hoyISO()) + 'T00:00:00');
+  d.setDate(d.getDate() + (Number(n) || 0));
+  return hoyISO(d);
 }
 
 export function nombreMes(ref = new Date()) {
@@ -168,14 +186,50 @@ export function descargarArchivo(nombre, contenido, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-export const FRECUENCIAS = ['Diario', 'Cada 3 días', 'Semanal', 'Quincenal'];
-export const METODOS_PAGO = ['Efectivo', 'Transferencia', 'Crédito (adeudo)'];
+export const FRECUENCIAS = ['Diario', 'Cada 3 días', 'Semanal', 'Quincenal', 'Mensual'];
+export const METODOS_PAGO = ['Efectivo', 'Transferencia'];
 export const ESTADOS_PEDIDO = ['Pendiente', 'Entregado'];
+
+/** Categorías de gasto, basadas en los costos operativos reales del negocio. */
+export const GASTO_CATEGORIAS = [
+  'Nómina',
+  'Insumos (tapas, sellos)',
+  'Gasolina / Logística',
+  'Renta',
+  'Filtros / Mantenimiento',
+  'Servicios (luz, agua)',
+  'Otros'
+];
+
+/** Tipos de registro en la bitácora de mantenimiento y calidad. */
+export const MANTENIMIENTO_TIPOS = [
+  'Cambio de filtros',
+  'Mantenimiento preventivo',
+  'Reparación',
+  'Prueba de calidad',
+  'Otro'
+];
+
+/** Días recomendados entre cambios de filtro (mantenimiento preventivo). */
+export const DIAS_CAMBIO_FILTROS = 30;
+
+/** Capacidad/máximo histórico de garrafones en un día (diagnóstico). */
+export const CAPACIDAD_DIARIA = 180;
+
+/** Tipos de movimiento del inventario de garrafones. */
+export const INVENTARIO_TIPOS = [
+  'Compra de nuevos',
+  'Canje',
+  'Retorno de usado',
+  'Baja / reciclado',
+  'Ajuste'
+];
 
 /** Días estimados según frecuencia, para sugerencias de ruta. */
 export const FRECUENCIA_DIAS = {
   'Diario': 1,
   'Cada 3 días': 3,
   'Semanal': 7,
-  'Quincenal': 15
+  'Quincenal': 15,
+  'Mensual': 30
 };

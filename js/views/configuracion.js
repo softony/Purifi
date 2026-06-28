@@ -14,6 +14,7 @@ async function guardarConfig(form) {
     negocio: (fd.negocio || '').trim() || 'Mi Purificadora',
     precioDomicilio: Number(fd.precioDomicilio) || 0,
     precioVentanilla: Number(fd.precioVentanilla) || 0,
+    precioCanje: Number(fd.precioCanje) || 0,
     moneda: fd.moneda || 'MXN',
     respaldoAuto: !!form.querySelector('#respaldoAuto').checked
   };
@@ -65,6 +66,11 @@ export async function render(root) {
         <label for="precioVentanilla">Precio en ventanilla</label>
         <input id="precioVentanilla" name="precioVentanilla" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioVentanilla)}" />
       </div>
+    </div>
+    <div class="field">
+      <label for="precioCanje">Precio de canje (por garrafón)</label>
+      <input id="precioCanje" name="precioCanje" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioCanje)}" />
+      <p class="hint" style="margin:4px 0 0">Cargo por cambiar un garrafón usado por uno nuevo. Se usa al registrar canjes en Pedidos.</p>
     </div>
     <div class="field">
       <label for="moneda">Moneda</label>

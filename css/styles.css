@@ -200,6 +200,48 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .icon-btn--danger { color: var(--rojo); border-color: var(--rojo-claro); background: var(--rojo-claro); }
 .icon-btn--ok { color: var(--verde); border-color: var(--verde-claro); background: var(--verde-claro); }
 
+/* ---------- Número de cliente (rotulado de garrafón) ---------- */
+.cliente-num {
+  flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-width: 54px; height: 54px; padding: 0 8px;
+  background: var(--azul-claro); color: var(--azul-osc);
+  border: 2px solid var(--azul-medio); border-radius: var(--radio-sm);
+  line-height: 1;
+}
+.cliente-num small { font-size: .58rem; font-weight: 700; opacity: .85; letter-spacing: .5px; }
+.cliente-num b { font-size: 1.2rem; font-weight: 800; }
+.readonly-num {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 14px; border: 2px dashed var(--azul-medio); border-radius: var(--radio-sm);
+  background: var(--azul-claro); color: var(--azul-osc); font-size: 1.4rem; font-weight: 800;
+}
+.readonly-num small { font-size: .8rem; font-weight: 600; color: var(--gris-sec); }
+.num-inline {
+  display: inline-block; background: var(--azul-claro); color: var(--azul-osc);
+  border-radius: 999px; padding: 1px 9px; font-size: .82rem; font-weight: 800;
+  vertical-align: middle;
+}
+
+/* ---------- Balance (utilidad del periodo) ---------- */
+.balance { display: flex; flex-direction: column; gap: 6px; }
+.balance__row { display: flex; justify-content: space-between; align-items: center; font-size: 1rem; }
+.balance__row--total {
+  border-top: 2px solid rgba(0,0,0,.12); margin-top: 4px; padding-top: 8px;
+  font-size: 1.25rem;
+}
+.balance__row--total strong { font-weight: 800; }
+
+/* ---------- Indicadores de gestión (Dashboard) ---------- */
+.mini-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 720px) { .mini-grid { grid-template-columns: repeat(4, 1fr); } }
+.mini { background: var(--azul-claro); border-radius: var(--radio-sm); padding: 10px 12px; }
+.mini__valor { font-size: 1.3rem; font-weight: 800; color: var(--azul-osc); }
+.mini__label { font-size: .78rem; color: var(--gris-sec); margin-top: 2px; }
+.barra { height: 14px; background: #e0e0e0; border-radius: 999px; overflow: hidden; }
+.barra__fill { height: 100%; background: var(--azul-medio); border-radius: 999px; transition: width .4s ease; }
+.barra__fill--alto { background: var(--verde, #2e7d32); }
+
 /* ---------- Badges / chips ---------- */
 .badge {
   display: inline-block; padding: 3px 10px; border-radius: 999px;

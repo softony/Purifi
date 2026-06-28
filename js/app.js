@@ -11,6 +11,10 @@ import * as clientes from './views/clientes.js';
 import * as pedidos from './views/pedidos.js';
 import * as cobranza from './views/cobranza.js';
 import * as rutas from './views/rutas.js';
+import * as seguimiento from './views/seguimiento.js';
+import * as gastos from './views/gastos.js';
+import * as mantenimiento from './views/mantenimiento.js';
+import * as inventario from './views/inventario.js';
 import * as reportes from './views/reportes.js';
 import * as configuracion from './views/configuracion.js';
 
@@ -20,6 +24,10 @@ const ROUTES = {
   pedidos: { title: 'Pedidos', mod: pedidos },
   cobranza: { title: 'Cobranza', mod: cobranza },
   rutas: { title: 'Rutas', mod: rutas },
+  seguimiento: { title: 'Seguimiento', mod: seguimiento },
+  gastos: { title: 'Gastos', mod: gastos },
+  mantenimiento: { title: 'Mantenimiento', mod: mantenimiento },
+  inventario: { title: 'Inventario', mod: inventario },
   reportes: { title: 'Reportes', mod: reportes },
   configuracion: { title: 'Configuración', mod: configuracion }
 };
@@ -29,13 +37,28 @@ const viewTitle = document.getElementById('viewTitle');
 
 /* ---------- Service Worker ---------- */
 function registrarSW() {
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch((err) => {
-        console.warn('No se pudo registrar el Service Worker:', err);
-      });
+  if (!('serviceWorker' in navigator)) return;
+
+  // ¿Ya había un Service Worker controlando la página al cargar?
+  // Si lo había, un cambio de controlador significa que se instaló una
+  // versión NUEVA de la app: recargamos una sola vez para servir los
+  // archivos actualizados (evita quedarse con una versión vieja en caché).
+  const habiaControlador = !!navigator.serviceWorker.controller;
+  let recargando = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (recargando || !habiaControlador) return;
+    recargando = true;
+    window.location.reload();
+  });
+
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      // Busca actualizaciones del SW en cada arranque.
+      reg.update().catch(() => {});
+    }).catch((err) => {
+      console.warn('No se pudo registrar el Service Worker:', err);
     });
-  }
+  });
 }
 
 /* ---------- Estado de conexión ---------- */

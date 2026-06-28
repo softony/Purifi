@@ -2,15 +2,32 @@
  * services.js — Lógica de negocio y consultas derivadas.
  * Centraliza cálculos de ventas, saldos y agrupaciones para evitar duplicación.
  *
- * Modelo de saldos (cobranza):
- *   CARGOS  = pedidos a crédito (total) + adeudos manuales (pagos.tipo='adeudo')
+ * Modelo de cobro (3 estados por pedido):
+ *   - Pendiente (en camino)        : estado='Pendiente'           → no es venta ni deuda
+ *   - Entregado y pagado           : estado='Entregado', pagado=true  → es venta cobrada
+ *   - Entregado a crédito (debe)   : estado='Entregado', pagado=false → es venta + adeudo
+ *
+ * Saldo (cobranza):
+ *   CARGOS  = pedidos entregados NO pagados (total) + adeudos manuales (pagos.tipo='adeudo')
  *   ABONOS  = pagos (pagos.tipo='pago')
  *   SALDO   = CARGOS - ABONOS   (positivo = el cliente debe)
+ *
+ * Ingresos (ventas): se cuentan cuando el pedido se ENTREGA (no al crearlo).
  */
 import { STORES, getAll, getByIndex } from './db.js';
-import { hoyISO, inicioSemanaISO, inicioMesISO } from './utils.js';
+import { hoyISO, inicioSemanaISO, inicioMesISO, diasEntre, FRECUENCIA_DIAS } from './utils.js';
 
 export const CREDITO = 'Crédito (adeudo)';
+
+/** ¿El pedido genera adeudo? Entregado pero no cobrado. */
+export function esAdeudoPedido(p) {
+  return p && p.estado === 'Entregado' && p.pagado === false;
+}
+
+/** ¿El pedido cuenta como venta? Cuando ya fue entregado. */
+export function esVentaPedido(p) {
+  return p && p.estado === 'Entregado';
+}
 
 export async function mapaClientes() {
   const clientes = await getAll(STORES.clientes);
@@ -30,7 +47,7 @@ export async function saldoCliente(clienteId) {
     getByIndex(STORES.pagos, 'clienteId', clienteId)
   ]);
   let cargos = 0;
-  pedidos.forEach((p) => { if (p.metodoPago === CREDITO) cargos += Number(p.total) || 0; });
+  pedidos.forEach((p) => { if (esAdeudoPedido(p)) cargos += Number(p.total) || 0; });
   let abonos = 0;
   pagos.forEach((p) => {
     if (p.tipo === 'adeudo') cargos += Number(p.monto) || 0;
@@ -46,7 +63,7 @@ export async function saldosTodos() {
   ]);
   const saldo = new Map();
   const add = (id, v) => saldo.set(id, (saldo.get(id) || 0) + v);
-  pedidos.forEach((p) => { if (p.metodoPago === CREDITO) add(p.clienteId, Number(p.total) || 0); });
+  pedidos.forEach((p) => { if (esAdeudoPedido(p)) add(p.clienteId, Number(p.total) || 0); });
   pagos.forEach((p) => {
     if (p.tipo === 'adeudo') add(p.clienteId, Number(p.monto) || 0);
     else add(p.clienteId, -(Number(p.monto) || 0));
@@ -76,22 +93,35 @@ export async function resumenDashboard() {
   const pedidosHoy = filtrarPorFecha(pedidos, hoy, hoy);
   const pedidosSemana = filtrarPorFecha(pedidos, lunes, hoy);
 
-  const ventasDia = pedidosHoy.reduce((s, p) => s + (Number(p.total) || 0), 0);
-  const ventasSemana = pedidosSemana.reduce((s, p) => s + (Number(p.total) || 0), 0);
-  const garrafonesTotal = pedidos.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
-  const garrafonesHoy = pedidosHoy.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  // Las ventas (ingresos) y garrafones vendidos cuentan solo lo ya ENTREGADO.
+  const entregadosHoy = pedidosHoy.filter(esVentaPedido);
+  const entregadosSemana = pedidosSemana.filter(esVentaPedido);
+
+  const ventasDia = entregadosHoy.reduce((s, p) => s + (Number(p.total) || 0), 0);
+  const ventasSemana = entregadosSemana.reduce((s, p) => s + (Number(p.total) || 0), 0);
+  const garrafonesTotal = pedidos.filter(esVentaPedido).reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  const garrafonesHoy = entregadosHoy.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
 
   let adeudoTotal = 0; let clientesConAdeudo = 0;
   for (const v of saldos.values()) { if (v > 0.001) { adeudoTotal += v; clientesConAdeudo++; } }
 
   const pendientes = pedidos.filter((p) => p.estado === 'Pendiente').length;
 
+  // KPIs ampliados
+  const garrafonesSemana = entregadosSemana.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  const pedidosEntregadosSemana = entregadosSemana.length;
+  const ticketPromedio = pedidosEntregadosSemana ? ventasSemana / pedidosEntregadosSemana : 0;
+  const pctConAdeudo = clientes.length ? (clientesConAdeudo / clientes.length) * 100 : 0;
+
   return {
     ventasDia, ventasSemana,
     clientesActivos: clientes.length,
     adeudoTotal, clientesConAdeudo,
-    garrafonesTotal, garrafonesHoy,
+    garrafonesTotal, garrafonesHoy, garrafonesSemana,
     pedidosHoy: pedidosHoy.length,
+    pedidosEntregadosSemana,
+    ticketPromedio,
+    pctConAdeudo,
     pendientes
   };
 }
@@ -113,6 +143,37 @@ export async function clientesMasFrecuentes(limite = 10) {
     .slice(0, limite);
 }
 
+/** Seguimiento de clientes: a quién toca visitar y quién está en riesgo de fuga.
+ * Calcula, según la frecuencia de cada cliente y su última entrega:
+ *  - 'al_dia'      : comprado hace menos del intervalo de su frecuencia
+ *  - 'por_visitar' : ya toca surtirle (entre 1x y 3x su intervalo)
+ *  - 'inactivo'    : lleva 3x su intervalo o más sin comprar (riesgo de fuga)
+ *  - 'sin_compras' : cliente registrado sin pedidos entregados
+ */
+export async function seguimientoClientes() {
+  const [clientes, pedidos] = await Promise.all([getAll(STORES.clientes), getAll(STORES.pedidos)]);
+  const ultima = new Map();
+  pedidos.forEach((p) => {
+    if (p.estado !== 'Entregado') return;
+    const f = (p.entregadoEn || '').slice(0, 10) || p.fecha;
+    if (!f) return;
+    const prev = ultima.get(p.clienteId);
+    if (!prev || f > prev) ultima.set(p.clienteId, f);
+  });
+  const hoy = hoyISO();
+  return clientes.map((c) => {
+    const interval = FRECUENCIA_DIAS[c.frecuencia] || 7;
+    const ult = ultima.get(c.id) || null;
+    const dias = ult ? diasEntre(ult, hoy) : null;
+    let estado;
+    if (!ult) estado = 'sin_compras';
+    else if (dias >= interval * 3) estado = 'inactivo';
+    else if (dias >= interval) estado = 'por_visitar';
+    else estado = 'al_dia';
+    return { cliente: c, ultima: ult, dias, interval, estado };
+  });
+}
+
 /** Agrupa clientes por colonia (zona) para rutas. */
 export async function clientesPorColonia() {
   const clientes = await getAll(STORES.clientes);
@@ -128,6 +189,58 @@ export async function clientesPorColonia() {
     .map(([zona, lista]) => [zona, lista.sort((a, b) => (a.calle || '').localeCompare(b.calle || '', 'es'))]);
 }
 
+/** Mapea un intervalo en días a la frecuencia más cercana de la lista. */
+function frecuenciaDesdeDias(d) {
+  let best = null; let bestDiff = Infinity;
+  for (const [nombre, dias] of Object.entries(FRECUENCIA_DIAS)) {
+    const diff = Math.abs(dias - d);
+    if (diff < bestDiff) { bestDiff = diff; best = nombre; }
+  }
+  return best;
+}
+
+/** Analiza el historial de compras (entregadas) por cliente:
+ *  última compra, días desde, número de compras, intervalo promedio real y
+ *  frecuencia sugerida a partir de ese intervalo. Devuelve Map<clienteId, info>.
+ */
+export async function analisisComprasClientes() {
+  const pedidos = await getAll(STORES.pedidos);
+  const porCliente = new Map();
+  pedidos.forEach((p) => {
+    if (p.estado !== 'Entregado') return;
+    const f = (p.entregadoEn || '').slice(0, 10) || p.fecha;
+    if (!f) return;
+    if (!porCliente.has(p.clienteId)) porCliente.set(p.clienteId, []);
+    porCliente.get(p.clienteId).push(f);
+  });
+  const hoy = hoyISO();
+  const res = new Map();
+  for (const [id, fechas] of porCliente) {
+    fechas.sort();
+    const ultima = fechas[fechas.length - 1];
+    const dias = diasEntre(ultima, hoy);
+    let intervaloProm = null; let frecuenciaSugerida = null;
+    if (fechas.length >= 2) {
+      let suma = 0; let n = 0;
+      for (let i = 1; i < fechas.length; i++) {
+        const d = diasEntre(fechas[i - 1], fechas[i]);
+        if (d > 0) { suma += d; n++; }
+      }
+      if (n > 0) { intervaloProm = Math.round(suma / n); frecuenciaSugerida = frecuenciaDesdeDias(intervaloProm); }
+    }
+    res.set(id, { ultima, dias, numCompras: fechas.length, intervaloProm, frecuenciaSugerida });
+  }
+  return res;
+}
+
+/** Existencias de garrafones (nuevos / usados) calculadas desde los movimientos. */
+export async function stockGarrafones() {
+  const movs = await getAll(STORES.inventario);
+  let nuevos = 0, usados = 0;
+  movs.forEach((m) => { nuevos += Number(m.nuevos) || 0; usados += Number(m.usados) || 0; });
+  return { nuevos: Math.round(nuevos), usados: Math.round(usados), total: Math.round(nuevos + usados) };
+}
+
 /** Ventas agregadas por día dentro de un rango. */
 export function ventasPorDia(pedidos, desdeISO, hastaISO) {
   const map = new Map();
@@ -140,4 +253,22 @@ export function ventasPorDia(pedidos, desdeISO, hastaISO) {
     map.set(f, cur);
   });
   return Array.from(map.values()).sort((a, b) => a.fecha.localeCompare(b.fecha));
+}
+
+/** Suma total de gastos dentro de un rango de fechas ISO inclusivo. */
+export function totalGastos(gastos, desdeISO, hastaISO) {
+  return filtrarPorFecha(gastos, desdeISO, hastaISO)
+    .reduce((s, g) => s + (Number(g.monto) || 0), 0);
+}
+
+/** Gastos agrupados por categoría dentro de un rango. Devuelve [ {categoria, total} ] desc. */
+export function gastosPorCategoria(gastos, desdeISO, hastaISO) {
+  const map = new Map();
+  filtrarPorFecha(gastos, desdeISO, hastaISO).forEach((g) => {
+    const cat = g.categoria || 'Otros';
+    map.set(cat, (map.get(cat) || 0) + (Number(g.monto) || 0));
+  });
+  return Array.from(map.entries())
+    .map(([categoria, total]) => ({ categoria, total }))
+    .sort((a, b) => b.total - a.total);
 }

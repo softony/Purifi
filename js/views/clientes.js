@@ -4,23 +4,40 @@
 import { STORES, getAll, add, put, remove, get } from '../db.js';
 import {
   el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
-  FRECUENCIAS, dinero
+  FRECUENCIAS, dinero, folioCliente, fechaLegible
 } from '../utils.js';
-import { saldosTodos } from '../services.js';
+import { saldosTodos, analisisComprasClientes } from '../services.js';
 
 let _cache = [];
 let _saldos = new Map();
+let _compras = new Map();
 
 function frecBadge(f) {
   return el('span', { class: 'badge badge--info', text: f || 'Sin definir' });
 }
 
+function ultimaCompraTexto(c) {
+  const info = _compras.get(c.id);
+  if (!info) return '🛒 Sin compras registradas';
+  if (info.dias === 0) return '🛒 Última compra: hoy';
+  return `🛒 Última compra: ${fechaLegible(info.ultima)} (hace ${info.dias} día(s))`;
+}
+
 function tarjetaCliente(c) {
   const saldo = _saldos.get(c.id) || 0;
   const meta = [c.calle, c.colonia].filter(Boolean).join(', ');
+  const folio = folioCliente(c);
+  const num = el('div', {
+    class: 'cliente-num',
+    title: `Número de cliente ${folio} — escríbelo en la parte baja del garrafón para rastrearlo`
+  }, [
+    el('small', { text: 'N.º' }),
+    el('b', { text: folio })
+  ]);
   const main = el('div', { class: 'item__main' }, [
     el('div', { class: 'item__title', text: c.nombre }),
     el('div', { class: 'item__meta', html: `${esc(meta || 'Sin dirección')}${c.telefono ? ' · 📞 ' + esc(c.telefono) : ''}` }),
+    el('div', { class: 'item__meta', text: ultimaCompraTexto(c) }),
     el('div', { class: 'tag-line mt' }, [
       frecBadge(c.frecuencia),
       saldo > 0.001 ? el('span', { class: 'badge badge--adeudo', text: `Debe ${dinero(saldo)}` }) : null
@@ -30,7 +47,7 @@ function tarjetaCliente(c) {
     el('button', { class: 'icon-btn', title: 'Editar', text: '✏️', onclick: () => formularioCliente(c) }),
     el('button', { class: 'icon-btn icon-btn--danger', title: 'Eliminar', text: '🗑️', onclick: () => eliminarCliente(c) })
   ]);
-  return el('div', { class: 'item' }, [main, actions]);
+  return el('div', { class: 'item' }, [num, main, actions]);
 }
 
 async function eliminarCliente(c) {
@@ -43,8 +60,23 @@ async function eliminarCliente(c) {
 
 function formularioCliente(cliente = {}) {
   const esEdit = !!cliente.id;
+  const info = esEdit ? _compras.get(cliente.id) : null;
+  let sugerenciaHTML = '';
+  if (info) {
+    if (info.frecuenciaSugerida && info.intervaloProm) {
+      sugerenciaHTML = `<p class="hint" id="frecSug" style="margin:6px 0 0">🛒 ${info.numCompras} compra(s), última ${fechaLegible(info.ultima)}. Compra cada ~${info.intervaloProm} día(s) → sugerencia: <strong>${esc(info.frecuenciaSugerida)}</strong>${cliente.frecuencia !== info.frecuenciaSugerida ? ' <button type="button" class="btn btn--ghost btn--sm" id="btnUsarSug">Usar sugerencia</button>' : ' ✔'}</p>`;
+    } else {
+      sugerenciaHTML = `<p class="hint" style="margin:6px 0 0">🛒 ${info.numCompras} compra(s), última ${fechaLegible(info.ultima)}. Con más compras se podrá sugerir la frecuencia.</p>`;
+    }
+  }
   const f = el('form', { class: 'form' });
   f.innerHTML = `
+    ${esEdit ? `
+    <div class="field">
+      <label>Número de cliente</label>
+      <div class="readonly-num">#${folioCliente(cliente)} <small>Escríbelo en la parte baja del garrafón para rastrearlo</small></div>
+    </div>` : `
+    <p class="hint">📌 Al guardar se asignará automáticamente un número de cliente. Sirve para rotular (con marcador) la parte baja del garrafón y saber de qué cliente provino la última vez.</p>`}
     <div class="field">
       <label for="cNombre">Nombre *</label>
       <input id="cNombre" name="nombre" required placeholder="Nombre del cliente" value="${esc(cliente.nombre || '')}" />
@@ -72,6 +104,7 @@ function formularioCliente(cliente = {}) {
       <select id="cFrec" name="frecuencia">
         ${FRECUENCIAS.map((x) => `<option ${cliente.frecuencia === x ? 'selected' : ''}>${x}</option>`).join('')}
       </select>
+      ${sugerenciaHTML}
     </div>
     <div class="field">
       <label for="cNotas">Notas</label>
@@ -83,6 +116,14 @@ function formularioCliente(cliente = {}) {
     </div>
   `;
   f.querySelector('#btnCancelar').addEventListener('click', cerrarModal);
+  const btnSug = f.querySelector('#btnUsarSug');
+  if (btnSug && info && info.frecuenciaSugerida) {
+    btnSug.addEventListener('click', () => {
+      f.querySelector('#cFrec').value = info.frecuenciaSugerida;
+      btnSug.textContent = 'Aplicada ✔';
+      btnSug.disabled = true;
+    });
+  }
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(f);
@@ -115,7 +156,7 @@ function aplicarFiltros() {
 
   let lista = _cache.slice();
   if (q) lista = lista.filter((c) =>
-    [c.nombre, c.telefono, c.calle, c.colonia, c.referencia].some((v) => (v || '').toLowerCase().includes(q)));
+    [c.nombre, c.telefono, c.calle, c.colonia, c.referencia, folioCliente(c), String(c.id)].some((v) => (v || '').toLowerCase().includes(q)));
   if (col) lista = lista.filter((c) => (c.colonia || 'Sin colonia') === col);
 
   lista.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es'));
@@ -132,7 +173,7 @@ function aplicarFiltros() {
 }
 
 async function recargar() {
-  [_cache, _saldos] = await Promise.all([getAll(STORES.clientes), saldosTodos()]);
+  [_cache, _saldos, _compras] = await Promise.all([getAll(STORES.clientes), saldosTodos(), analisisComprasClientes()]);
   pintarFiltroColonia();
   aplicarFiltros();
 }
@@ -146,7 +187,7 @@ function pintarFiltroColonia() {
 }
 
 export async function render(root, params = []) {
-  [_cache, _saldos] = await Promise.all([getAll(STORES.clientes), saldosTodos()]);
+  [_cache, _saldos, _compras] = await Promise.all([getAll(STORES.clientes), saldosTodos(), analisisComprasClientes()]);
 
   root.innerHTML = '';
   root.appendChild(el('div', { class: 'page-head' }, [
@@ -155,7 +196,7 @@ export async function render(root, params = []) {
   ]));
 
   const toolbar = el('div', { class: 'toolbar' }, [
-    el('input', { id: 'buscarCliente', class: 'search', type: 'search', placeholder: '🔍 Buscar por nombre, teléfono o dirección', oninput: debounce(aplicarFiltros, 200) }),
+    el('input', { id: 'buscarCliente', class: 'search', type: 'search', placeholder: '🔍 Buscar por nombre, N.º, teléfono o dirección', oninput: debounce(aplicarFiltros, 200) }),
     el('select', { id: 'filtroColonia', onchange: aplicarFiltros })
   ]);
   root.appendChild(toolbar);

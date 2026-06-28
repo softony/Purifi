@@ -4,14 +4,16 @@
 import { STORES, getAll } from '../db.js';
 import {
   el, $, dinero, numero, hoyISO, fechaLegible, inicioSemanaISO, inicioMesISO,
-  nombreMes, toast
+  nombreMes, toast, folioCliente
 } from '../utils.js';
 import {
-  ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes
+  ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes,
+  totalGastos, gastosPorCategoria, esVentaPedido
 } from '../services.js';
 import { exportarExcel, exportarPDF, exportarCSV } from '../export.js';
 
 let _pedidos = [];
+let _gastos = [];
 let _periodo = 'semana';
 let _datos = null; // resultado calculado actual
 
@@ -24,8 +26,10 @@ function rango(periodo) {
 
 async function calcular() {
   const { desde, hasta, titulo } = rango(_periodo);
-  const porDia = ventasPorDia(_pedidos, desde, hasta);
-  const enRango = filtrarPorFecha(_pedidos, desde, hasta);
+  // Solo se contabilizan como ventas los pedidos ya entregados.
+  const entregados = _pedidos.filter(esVentaPedido);
+  const porDia = ventasPorDia(entregados, desde, hasta);
+  const enRango = filtrarPorFecha(entregados, desde, hasta);
   const totalVentas = enRango.reduce((s, p) => s + (Number(p.total) || 0), 0);
   const totalGarrafones = enRango.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
 
@@ -36,12 +40,19 @@ async function calcular() {
   for (const [id, saldo] of saldos) {
     if (saldo > 0.001) {
       const c = mapa.get(id);
-      deudores.push({ nombre: c ? c.nombre : '— eliminado —', telefono: c?.telefono || '', saldo });
+      deudores.push({ folio: c ? folioCliente(c) : '—', nombre: c ? c.nombre : '— eliminado —', telefono: c?.telefono || '', saldo });
     }
   }
   deudores.sort((a, b) => b.saldo - a.saldo);
 
-  _datos = { desde, hasta, titulo, porDia, totalVentas, totalGarrafones, pedidos: enRango.length, frecuentes, deudores };
+  const gastosPeriodo = totalGastos(_gastos, desde, hasta);
+  const gastosCat = gastosPorCategoria(_gastos, desde, hasta);
+  const utilidad = Math.round((totalVentas - gastosPeriodo) * 100) / 100;
+
+  _datos = {
+    desde, hasta, titulo, porDia, totalVentas, totalGarrafones, pedidos: enRango.length,
+    frecuentes, deudores, gastosPeriodo, gastosCat, utilidad
+  };
   return _datos;
 }
 
@@ -64,9 +75,9 @@ function tablaFrecuentes(d) {
   const wrap = el('div', { class: 'table-wrap' });
   const t = el('table', { class: 'data' });
   t.innerHTML = `
-    <thead><tr><th>Cliente</th><th>Pedidos</th><th>Garrafones</th></tr></thead>
+    <thead><tr><th>N.º</th><th>Cliente</th><th>Pedidos</th><th>Garrafones</th></tr></thead>
     <tbody>
-      ${d.frecuentes.filter((x) => x.pedidos > 0).map((x) => `<tr><td>${x.cliente.nombre}</td><td>${numero(x.pedidos)}</td><td>${numero(x.garrafones)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sin datos.</td></tr>'}
+      ${d.frecuentes.filter((x) => x.pedidos > 0).map((x) => `<tr><td>${folioCliente(x.cliente) || '—'}</td><td>${x.cliente.nombre}</td><td>${numero(x.pedidos)}</td><td>${numero(x.garrafones)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin datos.</td></tr>'}
     </tbody>
   `;
   wrap.appendChild(t);
@@ -78,17 +89,48 @@ function tablaDeudores(d) {
   const total = d.deudores.reduce((s, x) => s + x.saldo, 0);
   const t = el('table', { class: 'data' });
   t.innerHTML = `
-    <thead><tr><th>Cliente</th><th>Teléfono</th><th>Adeudo</th></tr></thead>
+    <thead><tr><th>N.º</th><th>Cliente</th><th>Teléfono</th><th>Adeudo</th></tr></thead>
     <tbody>
-      ${d.deudores.map((x) => `<tr><td>${x.nombre}</td><td>${x.telefono || '—'}</td><td>${dinero(x.saldo)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sin adeudos. 🎉</td></tr>'}
+      ${d.deudores.map((x) => `<tr><td>${x.folio || '—'}</td><td>${x.nombre}</td><td>${x.telefono || '—'}</td><td>${dinero(x.saldo)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin adeudos. 🎉</td></tr>'}
     </tbody>
-    <tfoot><tr><th colspan="2">Total por cobrar</th><th>${dinero(total)}</th></tr></tfoot>
+    <tfoot><tr><th colspan="3">Total por cobrar</th><th>${dinero(total)}</th></tr></tfoot>
   `;
   wrap.appendChild(t);
   return wrap;
 }
 
 /* ---------- Exportaciones ---------- */
+function tablaGastos(d) {
+  const wrap = el('div', { class: 'table-wrap' });
+  const t = el('table', { class: 'data' });
+  t.innerHTML = `
+    <thead><tr><th>Categoría</th><th>Total</th></tr></thead>
+    <tbody>
+      ${d.gastosCat.map((g) => `<tr><td>${g.categoria}</td><td>${dinero(g.total)}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">Sin gastos en el periodo.</td></tr>'}
+    </tbody>
+    <tfoot><tr><th>Total gastos</th><th>${dinero(d.gastosPeriodo)}</th></tr></tfoot>
+  `;
+  wrap.appendChild(t);
+  return wrap;
+}
+
+function tarjetaBalance(d) {
+  const positivo = d.utilidad >= 0;
+  return el('div', { class: 'card', style: `background:${positivo ? 'var(--verde-claro)' : 'var(--rojo-claro, #ffebee)'}` }, [
+    el('h3', { text: '⚖️ Balance del periodo' }),
+    el('div', { class: 'balance' }, [
+      el('div', { class: 'balance__row' }, [el('span', { text: 'Ingresos (ventas)' }), el('strong', { text: dinero(d.totalVentas) })]),
+      el('div', { class: 'balance__row' }, [el('span', { text: 'Gastos' }), el('strong', { text: '− ' + dinero(d.gastosPeriodo) })]),
+      el('div', { class: 'balance__row balance__row--total' }, [
+        el('span', { text: positivo ? 'Utilidad' : 'Pérdida' }),
+        el('strong', { text: dinero(d.utilidad) })
+      ])
+    ]),
+    el('p', { class: 'muted', style: 'margin:8px 0 0', text: d.gastosPeriodo === 0 ? 'Aún no hay gastos registrados en el periodo. Registra los gastos para conocer la utilidad real.' : (positivo ? 'El negocio es rentable en este periodo. 🎉' : 'Los gastos superan a las ventas en este periodo.') })
+  ]);
+}
+
+
 function expExcel() {
   const d = _datos;
   if (!d) return;
@@ -99,11 +141,23 @@ function expExcel() {
     },
     {
       nombre: 'Clientes frecuentes',
-      rows: d.frecuentes.filter((x) => x.pedidos > 0).map((x) => ({ Cliente: x.cliente.nombre, Pedidos: x.pedidos, Garrafones: x.garrafones })),
+      rows: d.frecuentes.filter((x) => x.pedidos > 0).map((x) => ({ 'N.º': folioCliente(x.cliente) || '', Cliente: x.cliente.nombre, Pedidos: x.pedidos, Garrafones: x.garrafones })),
     },
     {
       nombre: 'Adeudos',
-      rows: d.deudores.map((x) => ({ Cliente: x.nombre, Telefono: x.telefono, Adeudo: x.saldo })),
+      rows: d.deudores.map((x) => ({ 'N.º': x.folio || '', Cliente: x.nombre, Telefono: x.telefono, Adeudo: x.saldo })),
+    },
+    {
+      nombre: 'Gastos por categoria',
+      rows: d.gastosCat.map((g) => ({ Categoria: g.categoria, Total: g.total })),
+    },
+    {
+      nombre: 'Balance',
+      rows: [
+        { Concepto: 'Ingresos (ventas)', Monto: d.totalVentas },
+        { Concepto: 'Gastos', Monto: d.gastosPeriodo },
+        { Concepto: d.utilidad >= 0 ? 'Utilidad' : 'Perdida', Monto: d.utilidad }
+      ],
     }
   ]);
   toast('Excel generado', 'success');
@@ -120,14 +174,20 @@ async function expPDF() {
       resumen: `Total del periodo: ${dinero(d.totalVentas)} · ${numero(d.totalGarrafones)} garrafones · ${numero(d.pedidos)} pedidos.`
     },
     {
+      titulo: 'Gastos por categoría',
+      columns: [{ label: 'Categoría' }, { label: 'Total' }],
+      rows: d.gastosCat.map((g) => [g.categoria, dinero(g.total)]),
+      resumen: `Ingresos: ${dinero(d.totalVentas)}  −  Gastos: ${dinero(d.gastosPeriodo)}  =  ${d.utilidad >= 0 ? 'Utilidad' : 'Pérdida'}: ${dinero(d.utilidad)}.`
+    },
+    {
       titulo: 'Clientes más frecuentes',
-      columns: [{ label: 'Cliente' }, { label: 'Pedidos' }, { label: 'Garrafones' }],
-      rows: d.frecuentes.filter((x) => x.pedidos > 0).map((x) => [x.cliente.nombre, x.pedidos, x.garrafones])
+      columns: [{ label: 'N.º' }, { label: 'Cliente' }, { label: 'Pedidos' }, { label: 'Garrafones' }],
+      rows: d.frecuentes.filter((x) => x.pedidos > 0).map((x) => [folioCliente(x.cliente) || '—', x.cliente.nombre, x.pedidos, x.garrafones])
     },
     {
       titulo: 'Clientes con adeudos',
-      columns: [{ label: 'Cliente' }, { label: 'Teléfono' }, { label: 'Adeudo' }],
-      rows: d.deudores.map((x) => [x.nombre, x.telefono || '—', dinero(x.saldo)]),
+      columns: [{ label: 'N.º' }, { label: 'Cliente' }, { label: 'Teléfono' }, { label: 'Adeudo' }],
+      rows: d.deudores.map((x) => [x.folio || '—', x.nombre, x.telefono || '—', dinero(x.saldo)]),
       resumen: `Total por cobrar: ${dinero(d.deudores.reduce((s, x) => s + x.saldo, 0))}.`
     }
   ]);
@@ -158,6 +218,8 @@ async function pintar(root) {
   ]));
 
   body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '📈 ' + d.titulo }), tablaVentas(d)]));
+  body.appendChild(tarjetaBalance(d));
+  body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '🧾 Gastos por categoría' }), tablaGastos(d)]));
   body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '⭐ Clientes más frecuentes' }), tablaFrecuentes(d)]));
   body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '⚠️ Clientes con adeudos' }), tablaDeudores(d)]));
 
@@ -166,7 +228,7 @@ async function pintar(root) {
 }
 
 export async function render(root) {
-  _pedidos = await getAll(STORES.pedidos);
+  [_pedidos, _gastos] = await Promise.all([getAll(STORES.pedidos), getAll(STORES.gastos)]);
 
   root.innerHTML = '';
   root.appendChild(el('div', { class: 'page-head' }, [ el('h2', { text: 'Reportes' }) ]));
