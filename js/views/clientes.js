@@ -4,15 +4,23 @@
 import { STORES, getAll, add, put, remove, get } from '../db.js';
 import {
   el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
-  FRECUENCIAS, dinero, folioCliente
+  FRECUENCIAS, dinero, folioCliente, fechaLegible
 } from '../utils.js';
-import { saldosTodos } from '../services.js';
+import { saldosTodos, analisisComprasClientes } from '../services.js';
 
 let _cache = [];
 let _saldos = new Map();
+let _compras = new Map();
 
 function frecBadge(f) {
   return el('span', { class: 'badge badge--info', text: f || 'Sin definir' });
+}
+
+function ultimaCompraTexto(c) {
+  const info = _compras.get(c.id);
+  if (!info) return '🛒 Sin compras registradas';
+  if (info.dias === 0) return '🛒 Última compra: hoy';
+  return `🛒 Última compra: ${fechaLegible(info.ultima)} (hace ${info.dias} día(s))`;
 }
 
 function tarjetaCliente(c) {
@@ -29,6 +37,7 @@ function tarjetaCliente(c) {
   const main = el('div', { class: 'item__main' }, [
     el('div', { class: 'item__title', text: c.nombre }),
     el('div', { class: 'item__meta', html: `${esc(meta || 'Sin dirección')}${c.telefono ? ' · 📞 ' + esc(c.telefono) : ''}` }),
+    el('div', { class: 'item__meta', text: ultimaCompraTexto(c) }),
     el('div', { class: 'tag-line mt' }, [
       frecBadge(c.frecuencia),
       saldo > 0.001 ? el('span', { class: 'badge badge--adeudo', text: `Debe ${dinero(saldo)}` }) : null
@@ -51,6 +60,15 @@ async function eliminarCliente(c) {
 
 function formularioCliente(cliente = {}) {
   const esEdit = !!cliente.id;
+  const info = esEdit ? _compras.get(cliente.id) : null;
+  let sugerenciaHTML = '';
+  if (info) {
+    if (info.frecuenciaSugerida && info.intervaloProm) {
+      sugerenciaHTML = `<p class="hint" id="frecSug" style="margin:6px 0 0">🛒 ${info.numCompras} compra(s), última ${fechaLegible(info.ultima)}. Compra cada ~${info.intervaloProm} día(s) → sugerencia: <strong>${esc(info.frecuenciaSugerida)}</strong>${cliente.frecuencia !== info.frecuenciaSugerida ? ' <button type="button" class="btn btn--ghost btn--sm" id="btnUsarSug">Usar sugerencia</button>' : ' ✔'}</p>`;
+    } else {
+      sugerenciaHTML = `<p class="hint" style="margin:6px 0 0">🛒 ${info.numCompras} compra(s), última ${fechaLegible(info.ultima)}. Con más compras se podrá sugerir la frecuencia.</p>`;
+    }
+  }
   const f = el('form', { class: 'form' });
   f.innerHTML = `
     ${esEdit ? `
@@ -86,6 +104,7 @@ function formularioCliente(cliente = {}) {
       <select id="cFrec" name="frecuencia">
         ${FRECUENCIAS.map((x) => `<option ${cliente.frecuencia === x ? 'selected' : ''}>${x}</option>`).join('')}
       </select>
+      ${sugerenciaHTML}
     </div>
     <div class="field">
       <label for="cNotas">Notas</label>
@@ -97,6 +116,14 @@ function formularioCliente(cliente = {}) {
     </div>
   `;
   f.querySelector('#btnCancelar').addEventListener('click', cerrarModal);
+  const btnSug = f.querySelector('#btnUsarSug');
+  if (btnSug && info && info.frecuenciaSugerida) {
+    btnSug.addEventListener('click', () => {
+      f.querySelector('#cFrec').value = info.frecuenciaSugerida;
+      btnSug.textContent = 'Aplicada ✔';
+      btnSug.disabled = true;
+    });
+  }
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(f);
@@ -146,7 +173,7 @@ function aplicarFiltros() {
 }
 
 async function recargar() {
-  [_cache, _saldos] = await Promise.all([getAll(STORES.clientes), saldosTodos()]);
+  [_cache, _saldos, _compras] = await Promise.all([getAll(STORES.clientes), saldosTodos(), analisisComprasClientes()]);
   pintarFiltroColonia();
   aplicarFiltros();
 }
@@ -160,7 +187,7 @@ function pintarFiltroColonia() {
 }
 
 export async function render(root, params = []) {
-  [_cache, _saldos] = await Promise.all([getAll(STORES.clientes), saldosTodos()]);
+  [_cache, _saldos, _compras] = await Promise.all([getAll(STORES.clientes), saldosTodos(), analisisComprasClientes()]);
 
   root.innerHTML = '';
   root.appendChild(el('div', { class: 'page-head' }, [

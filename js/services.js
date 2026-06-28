@@ -189,6 +189,50 @@ export async function clientesPorColonia() {
     .map(([zona, lista]) => [zona, lista.sort((a, b) => (a.calle || '').localeCompare(b.calle || '', 'es'))]);
 }
 
+/** Mapea un intervalo en días a la frecuencia más cercana de la lista. */
+function frecuenciaDesdeDias(d) {
+  let best = null; let bestDiff = Infinity;
+  for (const [nombre, dias] of Object.entries(FRECUENCIA_DIAS)) {
+    const diff = Math.abs(dias - d);
+    if (diff < bestDiff) { bestDiff = diff; best = nombre; }
+  }
+  return best;
+}
+
+/** Analiza el historial de compras (entregadas) por cliente:
+ *  última compra, días desde, número de compras, intervalo promedio real y
+ *  frecuencia sugerida a partir de ese intervalo. Devuelve Map<clienteId, info>.
+ */
+export async function analisisComprasClientes() {
+  const pedidos = await getAll(STORES.pedidos);
+  const porCliente = new Map();
+  pedidos.forEach((p) => {
+    if (p.estado !== 'Entregado') return;
+    const f = (p.entregadoEn || '').slice(0, 10) || p.fecha;
+    if (!f) return;
+    if (!porCliente.has(p.clienteId)) porCliente.set(p.clienteId, []);
+    porCliente.get(p.clienteId).push(f);
+  });
+  const hoy = hoyISO();
+  const res = new Map();
+  for (const [id, fechas] of porCliente) {
+    fechas.sort();
+    const ultima = fechas[fechas.length - 1];
+    const dias = diasEntre(ultima, hoy);
+    let intervaloProm = null; let frecuenciaSugerida = null;
+    if (fechas.length >= 2) {
+      let suma = 0; let n = 0;
+      for (let i = 1; i < fechas.length; i++) {
+        const d = diasEntre(fechas[i - 1], fechas[i]);
+        if (d > 0) { suma += d; n++; }
+      }
+      if (n > 0) { intervaloProm = Math.round(suma / n); frecuenciaSugerida = frecuenciaDesdeDias(intervaloProm); }
+    }
+    res.set(id, { ultima, dias, numCompras: fechas.length, intervaloProm, frecuenciaSugerida });
+  }
+  return res;
+}
+
 /** Existencias de garrafones (nuevos / usados) calculadas desde los movimientos. */
 export async function stockGarrafones() {
   const movs = await getAll(STORES.inventario);
