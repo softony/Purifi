@@ -15,7 +15,7 @@
  * Ingresos (ventas): se cuentan cuando el pedido se ENTREGA (no al crearlo).
  */
 import { STORES, getAll, getByIndex } from './db.js';
-import { hoyISO, inicioSemanaISO, inicioMesISO, diasEntre, FRECUENCIA_DIAS } from './utils.js';
+import { hoyISO, inicioSemanaISO, inicioMesISO, diasEntre, sumarDiasISO, FRECUENCIA_DIAS, tipoGasto } from './utils.js';
 
 export const CREDITO = 'Crédito (adeudo)';
 
@@ -231,6 +231,44 @@ export async function analisisComprasClientes() {
     res.set(id, { ultima, dias, numCompras: fechas.length, intervaloProm, frecuenciaSugerida });
   }
   return res;
+}
+
+/** Inteligencia de negocio: costo, margen y utilidad por garrafón.
+ * Usa una ventana móvil de los últimos `dias` días (por defecto 30) para suavizar
+ * el "efecto sierra" de las compras grandes de pipa. El canje queda fuera del
+ * cálculo del agua (no es venta de agua, es el envase).
+ */
+export async function inteligenciaPorGarrafon(dias = 30) {
+  const [pedidos, gastos] = await Promise.all([getAll(STORES.pedidos), getAll(STORES.gastos)]);
+  const hasta = hoyISO();
+  const desde = sumarDiasISO(hasta, -(dias - 1));
+
+  const entregados = filtrarPorFecha(pedidos.filter(esVentaPedido), desde, hasta);
+  const garrafones = entregados.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  // Ingreso SOLO por agua (excluye el cargo de canje del envase).
+  const ingresoAgua = entregados.reduce((s, p) => s + ((Number(p.cantidad) || 0) * (Number(p.precioUnit) || 0)), 0);
+
+  let directo = 0; let distribucion = 0; let fijo = 0;
+  filtrarPorFecha(gastos, desde, hasta).forEach((g) => {
+    const m = Number(g.monto) || 0;
+    const t = tipoGasto(g.categoria);
+    if (t === 'directo') directo += m;
+    else if (t === 'distribucion') distribucion += m;
+    else fijo += m;
+  });
+
+  const hayDatos = garrafones > 0;
+  const costoDirectoUnit = hayDatos ? directo / garrafones : 0;
+  const precioProm = hayDatos ? ingresoAgua / garrafones : 0;
+  const margenBruto = precioProm - costoDirectoUnit;
+  const margenPct = precioProm > 0 ? (margenBruto / precioProm) * 100 : 0;
+  const utilidadUnit = hayDatos ? (ingresoAgua - directo - distribucion - fijo) / garrafones : 0;
+
+  return {
+    desde, hasta, dias, hayDatos, garrafones, ingresoAgua,
+    directo, distribucion, fijo,
+    costoDirectoUnit, precioProm, margenBruto, margenPct, utilidadUnit
+  };
 }
 
 /** Existencias de garrafones (nuevos / usados) calculadas desde los movimientos. */

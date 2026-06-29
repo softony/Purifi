@@ -202,6 +202,28 @@ export const GASTO_CATEGORIAS = [
   'Otros'
 ];
 
+/**
+ * Clasificación de cada categoría de gasto para el cálculo de costo y utilidad
+ * por garrafón:
+ *  - 'directo'      : costo variable de producción (escala con cada garrafón)
+ *  - 'distribucion' : costo de reparto (escala con la entrega, no con producción)
+ *  - 'fijo'         : costo de operación que no cambia con el volumen
+ */
+export const GASTO_TIPO = {
+  'Agua de pipa (suministro)': 'directo',
+  'Insumos (tapas, sellos)': 'directo',
+  'Gasolina / Logística': 'distribucion',
+  'Nómina': 'fijo',
+  'Renta': 'fijo',
+  'Filtros / Mantenimiento': 'fijo',
+  'Servicios (luz, etc.)': 'fijo',
+  'Otros': 'fijo'
+};
+
+export function tipoGasto(categoria) {
+  return GASTO_TIPO[categoria] || 'fijo';
+}
+
 /** Tipos de registro en la bitácora de mantenimiento y calidad. */
 export const MANTENIMIENTO_TIPOS = [
   'Cambio de filtros',

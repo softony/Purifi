@@ -9,7 +9,7 @@ import {
 import {
   ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes,
   totalGastos, gastosPorCategoria, esVentaPedido,
-  stockGarrafones, seguimientoClientes, clientesPorColonia
+  stockGarrafones, seguimientoClientes, clientesPorColonia, inteligenciaPorGarrafon
 } from '../services.js';
 import { exportarExcel, exportarPDF, exportarCSV } from '../export.js';
 
@@ -214,6 +214,7 @@ async function expEjecutivo() {
     getAll(STORES.clientes), getAll(STORES.pedidos), getAll(STORES.gastos),
     stockGarrafones(), seguimientoClientes(), clientesPorColonia(), saldosTodos()
   ]);
+  const bi = await inteligenciaPorGarrafon(30);
   const entregadosMes = filtrarPorFecha(pedidos.filter(esVentaPedido), desde, hasta);
   const ventasMes = entregadosMes.reduce((s, p) => s + (Number(p.total) || 0), 0);
   const garrafonesMes = entregadosMes.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
@@ -261,6 +262,17 @@ async function expEjecutivo() {
         ['Usados / retornados', numero(stock.usados)],
         ['Total', numero(stock.total)]
       ]
+    },
+    {
+      titulo: 'Inteligencia por garrafón (últimos 30 días)',
+      columns: [{ label: 'Indicador' }, { label: 'Valor' }],
+      rows: bi.hayDatos ? [
+        ['Costo directo de producción', dinero(bi.costoDirectoUnit)],
+        ['Precio promedio de venta', dinero(bi.precioProm)],
+        ['Margen bruto', `${dinero(bi.margenBruto)} (${Math.round(bi.margenPct)}%)`],
+        ['Utilidad neta estimada', dinero(bi.utilidadUnit)]
+      ] : [['Sin datos suficientes', 'Registra ventas y gastos de los últimos 30 días']],
+      resumen: bi.hayDatos ? `Calculado sobre ${numero(bi.garrafones)} garrafón(es) entregado(s) (el canje queda fuera del costo del agua).` : ''
     }
   ]);
   toast('Reporte ejecutivo generado', 'success');
