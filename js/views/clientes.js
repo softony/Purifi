@@ -23,6 +23,40 @@ function ultimaCompraTexto(c) {
   return `🛒 Última compra: ${fechaLegible(info.ultima)} (hace ${info.dias} día(s))`;
 }
 
+/** Solo dígitos del teléfono, para comparar sin importar espacios o guiones. */
+function telDigitos(t) { return (t || '').replace(/\D/g, ''); }
+
+/** Busca un posible cliente duplicado por teléfono (prioritario) o por nombre. */
+function buscarDuplicadoCliente(datos, excluirId) {
+  const tel = telDigitos(datos.telefono);
+  const nombre = (datos.nombre || '').trim().toLowerCase();
+  if (tel.length >= 7) {
+    const m = _cache.find((c) => c.id !== excluirId && telDigitos(c.telefono) === tel);
+    if (m) return { cliente: m, motivo: 'el mismo teléfono' };
+  }
+  if (nombre) {
+    const m = _cache.find((c) => c.id !== excluirId && (c.nombre || '').trim().toLowerCase() === nombre);
+    if (m) return { cliente: m, motivo: 'el mismo nombre' };
+  }
+  return null;
+}
+
+/** Muestra dentro del formulario un aviso de posible duplicado con opciones. */
+function mostrarAvisoDuplicado(f, dup, onForzar) {
+  const viejo = f.querySelector('#avisoDup');
+  if (viejo) viejo.remove();
+  const c = dup.cliente;
+  const aviso = el('div', { id: 'avisoDup', class: 'card', style: 'background:var(--naranja-claro);margin:0 0 12px' }, [
+    el('p', { html: `⚠️ Ya existe un cliente con ${esc(dup.motivo)}: <strong>${esc(c.nombre)}</strong> (N.º ${folioCliente(c)}).` }),
+    el('div', { class: 'btn-row' }, [
+      el('button', { type: 'button', class: 'btn btn--warn btn--sm', text: 'Guardar de todas formas', onclick: () => onForzar() }),
+      el('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Editar el existente', onclick: () => { cerrarModal(); formularioCliente(c); } })
+    ])
+  ]);
+  f.prepend(aviso);
+  aviso.scrollIntoView({ block: 'nearest' });
+}
+
 function tarjetaCliente(c) {
   const saldo = _saldos.get(c.id) || 0;
   const meta = [c.calle, c.colonia].filter(Boolean).join(', ');
@@ -126,6 +160,14 @@ function formularioCliente(cliente = {}) {
   }
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const nombre = (f.querySelector('#cNombre').value || '').trim();
+    if (!nombre) { toast('El nombre es obligatorio', 'error'); return; }
+    const dup = buscarDuplicadoCliente({ nombre, telefono: f.querySelector('#cTel').value }, cliente.id);
+    if (dup) { mostrarAvisoDuplicado(f, dup, guardarCliente); return; }
+    await guardarCliente();
+  });
+
+  async function guardarCliente() {
     const fd = new FormData(f);
     const datos = Object.fromEntries(fd.entries());
     datos.nombre = (datos.nombre || '').trim();
@@ -143,7 +185,7 @@ function formularioCliente(cliente = {}) {
     }
     cerrarModal();
     await recargar();
-  });
+  }
 
   abrirModal(esEdit ? 'Editar cliente' : 'Nuevo cliente', f);
 }
