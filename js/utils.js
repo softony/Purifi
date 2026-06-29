@@ -192,12 +192,13 @@ export const ESTADOS_PEDIDO = ['Pendiente', 'Entregado'];
 
 /** Categorías de gasto, basadas en los costos operativos reales del negocio. */
 export const GASTO_CATEGORIAS = [
-  'Nómina',
+  'Agua de pipa (suministro)',
   'Insumos (tapas, sellos)',
+  'Nómina',
   'Gasolina / Logística',
   'Renta',
   'Filtros / Mantenimiento',
-  'Servicios (luz, agua)',
+  'Servicios (luz, etc.)',
   'Otros'
 ];
 

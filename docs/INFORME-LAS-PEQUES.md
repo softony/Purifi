@@ -91,7 +91,7 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 - Acciones rápidas: crear pedido (con cliente preseleccionado) y llamar.
 
 ### 🧾 Gastos
-- Registro de gastos por categoría (nómina, insumos, gasolina, renta, filtros, servicios, otros).
+- Registro de gastos por categoría (agua de pipa, insumos, nómina, gasolina, renta, filtros, servicios, otros).
 - Total y desglose por categoría, con filtro por periodo.
 - Exportación a Excel y PDF.
 
