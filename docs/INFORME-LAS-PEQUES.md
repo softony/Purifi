@@ -60,6 +60,7 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 ### 👥 Clientes
 - Alta, edición, borrado y búsqueda (por nombre, número, teléfono o dirección).
 - **Número de cliente automático** (#001, #002…) para rotular y rastrear los garrafones.
+- **Alerta de clientes duplicados:** al crear o editar, avisa si ya existe un cliente con el mismo **teléfono** o **nombre**, con opción de *guardar de todas formas* o *editar el existente* (evita fichas repetidas sin bloquear).
 - Frecuencia de compra: Diario, Cada 3 días, Semanal, Quincenal y **Mensual**.
 - **Última compra** visible en cada ficha y **sugerencia automática de frecuencia** según el historial real.
 - Filtro por colonia/zona.
@@ -145,6 +146,7 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 10. **Canje de garrafón ($50)** e **inventario completo** (nuevos/usados, baja/reciclado).
 11. **Última compra** y **sugerencia automática de frecuencia**.
 12. **Respaldo fuera del dispositivo** (compartir) y **reporte ejecutivo (PDF)**.
+13. **Alerta de clientes duplicados** (por teléfono o nombre) al crear/editar, para mantener la cartera limpia desde el inicio.
 
 ---
 
