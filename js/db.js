@@ -28,6 +28,7 @@ export const STORES = {
 };
 
 let _dbPromise = null;
+let _db = null;
 
 function openDB() {
   if (_dbPromise) return _dbPromise;
@@ -90,7 +91,7 @@ function openDB() {
       }
     };
 
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => { _db = req.result; resolve(_db); };
     req.onerror = () => reject(req.error);
   });
   return _dbPromise;
@@ -228,16 +229,22 @@ export async function importAll(backup, { merge = false } = {}) {
   });
 }
 
+/**
+ * Reinicio total de fábrica: elimina toda la base de datos (datos + configuración)
+ * y la recrea vacía. A diferencia de clear(), esto SÍ reinicia los contadores
+ * autoincrement, por lo que el primer cliente vuelve a ser el N.º 001.
+ * Tras llamarla, la app vuelve a su estado inicial (pedirá la configuración).
+ */
 export async function resetAll() {
-  await Promise.all([
-    clear(STORES.clientes),
-    clear(STORES.pedidos),
-    clear(STORES.pagos),
-    clear(STORES.rutas),
-    clear(STORES.gastos),
-    clear(STORES.mantenimiento),
-    clear(STORES.inventario)
-  ]);
+  if (_db) { _db.close(); _db = null; }
+  _dbPromise = null;
+  await new Promise((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(DB_NAME);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => resolve(); // continúa aunque otra pestaña la tenga abierta
+  });
+  await openDB(); // recrea los almacenes vacíos con contadores en cero
 }
 
 export default {

@@ -145,13 +145,13 @@ export async function render(root) {
 
   /* --- Zona peligrosa --- */
   root.appendChild(el('div', { class: 'card', style: 'border:2px solid var(--rojo-claro)' }, [
-    el('h3', { text: '⚠️ Borrar todos los datos' }),
-    el('p', { class: 'hint', text: 'Elimina clientes, pedidos, cobranza y rutas. La configuración se conserva. Esta acción no se puede deshacer.' }),
-    el('button', { class: 'btn btn--danger btn--lg btn--block', text: '🗑️ Borrar todo', onclick: async () => {
-      const ok = await confirmar('¿Seguro que deseas borrar TODOS los datos? Considera exportar un respaldo antes.', { ok: 'Borrar todo', peligro: true });
+    el('h3', { text: '⚠️ Reiniciar de fábrica' }),
+    el('p', { class: 'hint', text: 'Borra TODO: clientes, pedidos, cobranza, rutas, gastos, mantenimiento, inventario Y la configuración (nombre y precios). Los contadores vuelven a cero (el primer cliente será el N.º 001) y la app volverá a pedir la configuración inicial. Esta acción no se puede deshacer.' }),
+    el('button', { class: 'btn btn--danger btn--lg btn--block', text: '🗑️ Borrar todo y reiniciar', onclick: async () => {
+      const ok = await confirmar('¿Seguro que deseas borrar TODO (datos y configuración) y empezar desde cero? Considera exportar un respaldo antes.', { ok: 'Borrar todo', peligro: true });
       if (!ok) return;
       await resetAll();
-      toast('Datos borrados', 'success');
+      toast('Todo reiniciado', 'success');
       setTimeout(() => location.reload(), 800);
     } })
   ]));
