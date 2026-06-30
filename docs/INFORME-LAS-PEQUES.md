@@ -53,7 +53,7 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 ### 📊 Dashboard
 - Indicadores del día y la semana: ventas, clientes activos, adeudos, garrafones, pedidos.
 - **Indicadores de gestión:** ticket promedio, garrafones de la semana, % de cartera con adeudo, pedidos entregados.
-- **Inteligencia por garrafón (últimos 30 días):** costo directo de producción, precio promedio, margen bruto (y %) y utilidad neta estimada por garrafón.
+- **Centro de Inteligencia Operativa:** costo directo de producción, precio promedio, margen bruto (y %) y utilidad neta estimada por garrafón.
 - **Barra de capacidad usada hoy** vs. el máximo de 180 garrafones (muestra capacidad ociosa).
 - Avisos automáticos: clientes con adeudo, pedidos pendientes, clientes por visitar, clientes inactivos y recordatorio de respaldo.
 - Accesos rápidos (nuevo pedido, nuevo cliente, registrar pago).

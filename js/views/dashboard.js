@@ -68,8 +68,8 @@ export async function render(root) {
 
   // Inteligencia de negocio: costo y margen por garrafón (ventana móvil 30 días)
   const biCard = el('div', { class: 'card' }, [
-    el('h3', { text: '💡 Inteligencia: costo y margen por garrafón' }),
-    el('p', { class: 'muted', style: 'margin:0 0 10px', text: 'Promedio de los últimos 30 días (suaviza las compras de pipa).' })
+    el('h3', { text: '🧠 Centro de Inteligencia Operativa' }),
+    el('p', { class: 'muted', style: 'margin:0 0 10px', text: 'Costo y margen por garrafón · promedio de los últimos 30 días (suaviza las compras de pipa).' })
   ]);
   if (!bi.hayDatos) {
     biCard.appendChild(el('p', { class: 'muted', text: 'Aún no hay suficientes ventas/gastos en los últimos 30 días. Registra pedidos entregados y gastos (pipa, tapas, sellos) para ver estos indicadores.' }));
