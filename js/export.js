@@ -28,7 +28,7 @@ export async function compartirRespaldo() {
     if (navigator.canShare) {
       const file = new File([json], nombre, { type: 'application/json' });
       if (navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: 'Respaldo Las Peques', text: 'Respaldo de datos de la purificadora (guárdalo en un lugar seguro).' });
+        await navigator.share({ files: [file], title: 'Respaldo de datos', text: 'Respaldo de datos de la purificadora (guárdalo en un lugar seguro).' });
         return { compartido: true };
       }
     }

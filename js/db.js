@@ -157,13 +157,14 @@ export async function count(storeName) {
 /* ---------- Configuración (clave/valor) ---------- */
 
 const DEFAULT_CONFIG = {
-  negocio: 'Purificadora Las Peques',
-  precioDomicilio: 25,
+  negocio: 'Mi Purificadora',
+  precioDomicilio: 20,
   precioVentanilla: 15,
   precioCanje: 50,
   moneda: 'MXN',
   respaldoAuto: true,
-  ultimoRespaldo: null
+  ultimoRespaldo: null,
+  configurado: false
 };
 
 export async function getConfig() {
