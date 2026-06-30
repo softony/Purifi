@@ -2,11 +2,57 @@
  * configuracion.js — Ajustes del negocio, precios, respaldo y export/import.
  */
 import { getConfig, setConfigBulk, resetAll, count, STORES } from '../db.js';
-import { el, $, toast, confirmar, setMoneda, dinero, esc, fechaHoraLegible } from '../utils.js';
+import { el, $, toast, confirmar, setMoneda, dinero, esc, fechaHoraLegible, abrirModal, cerrarModal } from '../utils.js';
 import {
   exportarJSON, compartirRespaldo, importarJSON, exportarExcelCompleto,
   obtenerRespaldoAutoInfo, restaurarRespaldoAuto, respaldoAutomatico
 } from '../export.js';
+
+/**
+ * Confirmación reforzada para el borrado total: obliga a escribir la palabra
+ * "BORRAR" para habilitar el botón (evita borrados accidentales por toque),
+ * y ofrece respaldar antes.
+ */
+function confirmarBorradoTotal() {
+  const PALABRA = 'BORRAR';
+  const f = el('form', { class: 'form' });
+  f.innerHTML = `
+    <p class="confirm__msg">⚠️ Esto borra <strong>TODO</strong>: clientes, pedidos, cobranza, rutas, gastos, mantenimiento, inventario y la configuración (nombre y precios). <strong>No se puede deshacer.</strong></p>
+    <p class="hint">Si aún no has respaldado, hazlo antes. Para continuar, escribe <strong>${PALABRA}</strong> en el campo:</p>
+    <div class="field">
+      <input id="palabraBorrar" name="palabra" autocomplete="off" autocapitalize="characters" placeholder="Escribe ${PALABRA}" />
+    </div>
+    <div class="btn-row" style="margin-bottom:12px">
+      <button type="button" class="btn btn--ghost grow" id="btnRespaldarAntes">📤 Respaldar primero</button>
+    </div>
+    <div class="form__actions">
+      <button type="button" class="btn btn--ghost btn--lg grow" id="btnCancelarBorrar">Cancelar</button>
+      <button type="submit" class="btn btn--danger btn--lg grow" id="btnConfirmarBorrar" disabled>Borrar todo</button>
+    </div>
+  `;
+  const input = f.querySelector('#palabraBorrar');
+  const btnOk = f.querySelector('#btnConfirmarBorrar');
+  input.addEventListener('input', () => {
+    btnOk.disabled = input.value.trim().toUpperCase() !== PALABRA;
+  });
+  f.querySelector('#btnCancelarBorrar').addEventListener('click', cerrarModal);
+  f.querySelector('#btnRespaldarAntes').addEventListener('click', async () => {
+    try {
+      const r = await compartirRespaldo();
+      if (r.cancelado) return;
+      toast(r.compartido ? 'Respaldo compartido' : 'Respaldo descargado', 'success');
+    } catch (e) { toast('No se pudo respaldar: ' + e.message, 'error'); }
+  });
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (input.value.trim().toUpperCase() !== PALABRA) return;
+    await resetAll();
+    toast('Todo reiniciado', 'success');
+    cerrarModal();
+    setTimeout(() => location.reload(), 800);
+  });
+  abrirModal('Confirmar borrado total', f);
+}
 
 async function guardarConfig(form) {
   const fd = Object.fromEntries(new FormData(form).entries());
@@ -147,13 +193,7 @@ export async function render(root) {
   root.appendChild(el('div', { class: 'card', style: 'border:2px solid var(--rojo-claro)' }, [
     el('h3', { text: '⚠️ Reiniciar de fábrica' }),
     el('p', { class: 'hint', text: 'Borra TODO: clientes, pedidos, cobranza, rutas, gastos, mantenimiento, inventario Y la configuración (nombre y precios). Los contadores vuelven a cero (el primer cliente será el N.º 001) y la app volverá a pedir la configuración inicial. Esta acción no se puede deshacer.' }),
-    el('button', { class: 'btn btn--danger btn--lg btn--block', text: '🗑️ Borrar todo y reiniciar', onclick: async () => {
-      const ok = await confirmar('¿Seguro que deseas borrar TODO (datos y configuración) y empezar desde cero? Considera exportar un respaldo antes.', { ok: 'Borrar todo', peligro: true });
-      if (!ok) return;
-      await resetAll();
-      toast('Todo reiniciado', 'success');
-      setTimeout(() => location.reload(), 800);
-    } })
+    el('button', { class: 'btn btn--danger btn--lg btn--block', text: '🗑️ Borrar todo y reiniciar', onclick: confirmarBorradoTotal })
   ]));
 
   /* --- Acerca de --- */
