@@ -2,7 +2,7 @@
  * dashboard.js — Vista principal con indicadores clave (KPIs).
  */
 import { el, dinero, numero, hoyISO, fechaLegible, diasEntre, CAPACIDAD_DIARIA } from '../utils.js';
-import { resumenDashboard, seguimientoClientes } from '../services.js';
+import { resumenDashboard, seguimientoClientes, inteligenciaPorGarrafon } from '../services.js';
 import { getConfig } from '../db.js';
 
 function kpi(icono, label, valor, clase) {
@@ -17,6 +17,7 @@ export async function render(root) {
   const [r, cfg, seg] = await Promise.all([resumenDashboard(), getConfig(), seguimientoClientes()]);
   const porVisitar = seg.filter((i) => i.estado === 'por_visitar').length;
   const inactivos = seg.filter((i) => i.estado === 'inactivo').length;
+  const bi = await inteligenciaPorGarrafon(30);
 
   root.innerHTML = '';
   root.appendChild(el('div', { class: 'page-head' }, [
@@ -64,6 +65,25 @@ export async function render(root) {
     ])
   ]);
   root.appendChild(indicadores);
+
+  // Inteligencia de negocio: costo y margen por garrafón (ventana móvil 30 días)
+  const biCard = el('div', { class: 'card' }, [
+    el('h3', { text: '💡 Inteligencia: costo y margen por garrafón' }),
+    el('p', { class: 'muted', style: 'margin:0 0 10px', text: 'Promedio de los últimos 30 días (suaviza las compras de pipa).' })
+  ]);
+  if (!bi.hayDatos) {
+    biCard.appendChild(el('p', { class: 'muted', text: 'Aún no hay suficientes ventas/gastos en los últimos 30 días. Registra pedidos entregados y gastos (pipa, tapas, sellos) para ver estos indicadores.' }));
+  } else {
+    const utilNeg = bi.utilidadUnit < 0;
+    biCard.appendChild(el('div', { class: 'mini-grid' }, [
+      el('div', { class: 'mini' }, [el('div', { class: 'mini__valor', text: dinero(bi.costoDirectoUnit) }), el('div', { class: 'mini__label', text: 'Costo directo de producción' })]),
+      el('div', { class: 'mini' }, [el('div', { class: 'mini__valor', text: dinero(bi.precioProm) }), el('div', { class: 'mini__label', text: 'Precio promedio de venta' })]),
+      el('div', { class: 'mini' }, [el('div', { class: 'mini__valor', text: `${dinero(bi.margenBruto)} · ${Math.round(bi.margenPct)}%` }), el('div', { class: 'mini__label', text: 'Margen bruto por garrafón' })]),
+      el('div', { class: 'mini', style: utilNeg ? 'background:var(--rojo-claro,#ffebee)' : '' }, [el('div', { class: 'mini__valor', text: dinero(bi.utilidadUnit) }), el('div', { class: 'mini__label', text: 'Utilidad neta estimada' })])
+    ]));
+    biCard.appendChild(el('p', { class: 'muted', style: 'margin:10px 0 0', text: `Basado en ${numero(bi.garrafones)} garrafón(es) entregado(s) en el periodo. Si el costo de producción sube sin cambiar precios, puede ser señal de mermas o desperdicio.` }));
+  }
+  root.appendChild(biCard);
 
   // Alertas / avisos
   const avisos = el('div', { class: 'card' }, [ el('h3', { text: 'Resumen rápido' }) ]);

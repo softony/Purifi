@@ -53,6 +53,7 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 ### 📊 Dashboard
 - Indicadores del día y la semana: ventas, clientes activos, adeudos, garrafones, pedidos.
 - **Indicadores de gestión:** ticket promedio, garrafones de la semana, % de cartera con adeudo, pedidos entregados.
+- **Inteligencia por garrafón (últimos 30 días):** costo directo de producción, precio promedio, margen bruto (y %) y utilidad neta estimada por garrafón.
 - **Barra de capacidad usada hoy** vs. el máximo de 180 garrafones (muestra capacidad ociosa).
 - Avisos automáticos: clientes con adeudo, pedidos pendientes, clientes por visitar, clientes inactivos y recordatorio de respaldo.
 - Accesos rápidos (nuevo pedido, nuevo cliente, registrar pago).
@@ -111,6 +112,7 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 - Ventas por día, clientes frecuentes y deudores (con número de cliente).
 - **Balance del periodo: Ingresos − Gastos = Utilidad.**
 - Gastos por categoría.
+- **Inteligencia por garrafón (últimos 30 días):** costo directo de producción, precio promedio, margen bruto (y %) y utilidad neta estimada por garrafón. Usa promedio móvil de 30 días (suaviza las compras de pipa) y excluye el canje del costo del agua.
 - **Reporte ejecutivo (PDF)** del mes: indicadores, utilidad, cobertura por zona e inventario.
 - Exportación a Excel, PDF y CSV.
 
@@ -147,6 +149,7 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 11. **Última compra** y **sugerencia automática de frecuencia**.
 12. **Respaldo fuera del dispositivo** (compartir) y **reporte ejecutivo (PDF)**.
 13. **Alerta de clientes duplicados** (por teléfono o nombre) al crear/editar, para mantener la cartera limpia desde el inicio.
+14. **Inteligencia por garrafón:** costo de producción, margen bruto y utilidad neta por garrafón (promedio móvil de 30 días), en Dashboard y reporte ejecutivo.
 
 ---
 
