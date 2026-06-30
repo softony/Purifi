@@ -1,7 +1,7 @@
 {
-  "name": "Purificadora Las Peques",
-  "short_name": "Las Peques",
-  "description": "Gestión de clientes, pedidos, cobranza y rutas para purificadoras de agua.",
+  "name": "AquaGestión",
+  "short_name": "AquaGestión",
+  "description": "Gestión integral para purificadoras de agua: clientes, pedidos, cobranza, rutas, gastos e inventario.",
   "lang": "es",
   "dir": "ltr",
   "start_url": "./",

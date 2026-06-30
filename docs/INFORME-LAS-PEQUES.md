@@ -131,6 +131,7 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 - **Respaldo y portabilidad:** exportar/compartir respaldo (JSON), exportar a Excel/PDF, importar.
 - **Auto-actualización:** cuando se publica una versión nueva, la app se actualiza sola.
 - **Sin exposición de datos en la nube:** alojada como sitio estático (Cloudflare Pages).
+- **Multi-purificadora:** la app es genérica y reutilizable. Cada negocio que la instala es **independiente** (sus propios clientes, precios y datos), y configura su **nombre, precios y moneda** en una **pantalla de configuración inicial** la primera vez (o luego en Configuración). No requiere servidor central.
 
 ---
 
@@ -150,6 +151,7 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 12. **Respaldo fuera del dispositivo** (compartir) y **reporte ejecutivo (PDF)**.
 13. **Alerta de clientes duplicados** (por teléfono o nombre) al crear/editar, para mantener la cartera limpia desde el inicio.
 14. **Inteligencia por garrafón:** costo de producción, margen bruto y utilidad neta por garrafón (promedio móvil de 30 días), en Dashboard y reporte ejecutivo.
+15. **Multi-purificadora:** valores y marca genéricos ("AquaGestión"), nombre de negocio dinámico en el menú y **configuración inicial** al primer uso, para reutilizar la app en varias purificadoras.
 
 ---
 

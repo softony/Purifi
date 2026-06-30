@@ -2,8 +2,8 @@
  * app.js — Punto de entrada: registro del Service Worker, enrutador por hash,
  * navegación (sidenav + bottomnav), estado de conexión y respaldo automático.
  */
-import { getConfig } from './db.js';
-import { setMoneda, $, $$, toast } from './utils.js';
+import { getConfig, setConfigBulk } from './db.js';
+import { setMoneda, $, $$, toast, el, esc, abrirModal, cerrarModal } from './utils.js';
 import { respaldoAutomatico } from './export.js';
 
 import * as dashboard from './views/dashboard.js';
@@ -113,14 +113,78 @@ function cerrarNav() {
   document.getElementById('navBackdrop').hidden = true;
 }
 
+/* ---------- Marca dinámica (nombre del negocio) ---------- */
+function actualizarMarca(nombre) {
+  const b = document.getElementById('brandNombre');
+  if (b && nombre) b.textContent = nombre;
+}
+
+/* ---------- Configuración inicial (primera vez) ---------- */
+function configuracionInicial(cfg) {
+  const monedas = ['MXN', 'USD', 'GTQ', 'COP', 'ARS', 'PEN', 'CLP'];
+  const f = el('form', { class: 'form' });
+  f.innerHTML = `
+    <p class="hint">👋 ¡Bienvenido! Configura los datos de tu purificadora para empezar. Podrás cambiarlos cuando quieras en <strong>Configuración</strong>.</p>
+    <div class="field">
+      <label for="iNegocio">Nombre del negocio *</label>
+      <input id="iNegocio" name="negocio" required placeholder="Ej. Purificadora Las Peques" />
+    </div>
+    <div class="field--row">
+      <div class="field">
+        <label for="iDom">Precio a domicilio</label>
+        <input id="iDom" name="precioDomicilio" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioDomicilio)}" />
+      </div>
+      <div class="field">
+        <label for="iVen">Precio en ventanilla</label>
+        <input id="iVen" name="precioVentanilla" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioVentanilla)}" />
+      </div>
+    </div>
+    <div class="field--row">
+      <div class="field">
+        <label for="iCan">Precio de canje</label>
+        <input id="iCan" name="precioCanje" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioCanje)}" />
+      </div>
+      <div class="field">
+        <label for="iMon">Moneda</label>
+        <select id="iMon" name="moneda">${monedas.map((m) => `<option ${cfg.moneda === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="form__actions">
+      <button type="submit" class="btn btn--primary btn--lg btn--block">Empezar</button>
+    </div>
+  `;
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(f).entries());
+    const negocio = (fd.negocio || '').trim() || 'Mi Purificadora';
+    const moneda = fd.moneda || 'MXN';
+    await setConfigBulk({
+      negocio,
+      precioDomicilio: Number(fd.precioDomicilio) || 0,
+      precioVentanilla: Number(fd.precioVentanilla) || 0,
+      precioCanje: Number(fd.precioCanje) || 0,
+      moneda,
+      configurado: true
+    });
+    setMoneda(moneda);
+    actualizarMarca(negocio);
+    cerrarModal();
+    toast('¡Listo! Tu purificadora quedó configurada', 'success');
+    await render();
+  });
+  abrirModal('Configuración inicial', f);
+}
+
 /* ---------- Inicio ---------- */
 async function init() {
   registrarSW();
 
-  // Cargar moneda configurada para formato
+  // Cargar configuración (moneda y marca del negocio)
+  let cfg = {};
   try {
-    const cfg = await getConfig();
+    cfg = await getConfig();
     setMoneda(cfg.moneda);
+    actualizarMarca(cfg.negocio);
   } catch (e) { /* primera vez, usa defaults */ }
 
   // Eventos de navegación
@@ -150,6 +214,9 @@ async function init() {
 
   if (!location.hash) location.hash = '#/dashboard';
   await render();
+
+  // Configuración inicial la primera vez (multi-purificadora)
+  if (cfg && cfg.configurado === false) configuracionInicial(cfg);
 
   // Respaldo automático (silencioso) al iniciar si está activado
   respaldoAutomatico().catch(() => {});
