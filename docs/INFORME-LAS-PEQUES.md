@@ -155,6 +155,20 @@ El diagnóstico marcó varias áreas en rojo/amarillo. Así las atiende la aplic
 
 ---
 
+## 5.1 Historial de versiones
+
+| Versión | Fecha | Cambios principales | Impacto |
+|---|---|---|---|
+| 1.0 | Junio 2026 | MVP inicial | Registro básico de clientes y pedidos |
+| 1.1 | Junio 2026 | Validación de clientes duplicados | Mejora en la calidad de los datos |
+| 1.2 | Junio 2026 | Categoría "Agua de pipa (suministro)" | Separación de materia prima y servicios |
+| 2.0 | Junio 2026 | Clasificación automática de costos + Inteligencia por garrafón | Introducción de Business Intelligence |
+| 2.1 | Junio 2026 | Centro de Inteligencia Operativa + Reinicio seguro de la base de datos | Mayor seguridad operativa y mejor posicionamiento del producto |
+
+> Versión actual de la aplicación: **2.1**
+
+---
+
 ## 6. Pendientes y futuro
 
 - **Sincronización entre varios dispositivos** (para socio/empleados): requeriría un pequeño servidor/nube; a evaluar cuando se necesite.
