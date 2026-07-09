@@ -11,10 +11,32 @@
  *
  * Diseño preparado para futuras funciones de geolocalización:
  *  cada cliente puede almacenar { lat, lng } sin cambios de esquema.
+ *
+ * NOTA DE ROBUSTEZ (v2.2):
+ *  Las operaciones de escritura (add/put/remove/clear) esperan al evento
+ *  `transaction.oncomplete` antes de resolver la promesa. Esto garantiza que
+ *  los datos realmente se persistieron a disco, incluso si el navegador
+ *  cierra la pestaña justo después. Antes solo se esperaba `request.onsuccess`,
+ *  lo cual podía reportar éxito en transacciones que el navegador abortaba al
+ *  background (especialmente en iOS Safari y Android con poca RAM).
+ *  Además, cada escritura exitosa emite un evento `db:changed` en `window`
+ *  para que otros módulos (respaldo automático) puedan reaccionar.
  */
 
 const DB_NAME = 'aquagestion';
 const DB_VERSION = 4;
+
+/* ---------- EventBus interno: emite 'db:changed' en cada escritura ---------- */
+let _changeDebounce = null;
+function notificarCambio() {
+  // Debounce ligero: si hay varias escrituras seguidas en la misma tick,
+  // emitimos un solo evento.
+  if (_changeDebounce) clearTimeout(_changeDebounce);
+  _changeDebounce = setTimeout(() => {
+    try { window.dispatchEvent(new CustomEvent('db:changed')); } catch (e) { /* noop */ }
+    _changeDebounce = null;
+  }, 150);
+}
 
 export const STORES = {
   clientes: 'clientes',
@@ -97,10 +119,14 @@ function openDB() {
   return _dbPromise;
 }
 
+/**
+ * Devuelve { store, tx } para operaciones que necesitan acceder a la
+ * transacción completa (esperar oncomplete). En lecturas, tx puede ignorarse.
+ */
 function tx(storeName, mode = 'readonly') {
   return openDB().then((db) => {
     const t = db.transaction(storeName, mode);
-    return t.objectStore(storeName);
+    return { store: t.objectStore(storeName), tx: t };
   });
 }
 
@@ -111,47 +137,77 @@ function reqToPromise(request) {
   });
 }
 
+/**
+ * Espera a que la transacción se complete (datos realmente en disco) y
+ * resuelve con el valor que devolvió el request. Si la transacción aborta
+ * (ej. navegador cerró la pestaña, quota excedida), rechaza con el error.
+ */
+function reqWithTx(request, transaction) {
+  return new Promise((resolve, reject) => {
+    let resolved = false;
+    let result;
+    request.onsuccess = () => { result = request.result; /* esperar al tx */ };
+    request.onerror = () => { if (!resolved) { resolved = true; reject(request.error); } };
+    transaction.oncomplete = () => {
+      if (!resolved) { resolved = true; resolve(result); }
+    };
+    transaction.onabort = () => {
+      if (!resolved) { resolved = true; reject(transaction.error || new Error('Transacción abortada')); }
+    };
+    transaction.onerror = () => {
+      if (!resolved) { resolved = true; reject(transaction.error || request.error || new Error('Error en transacción')); }
+    };
+  });
+}
+
 /* ---------- API genérico CRUD ---------- */
 
 export async function getAll(storeName) {
-  const store = await tx(storeName);
+  const { store } = await tx(storeName);
   return reqToPromise(store.getAll());
 }
 
 export async function get(storeName, id) {
-  const store = await tx(storeName);
+  const { store } = await tx(storeName);
   return reqToPromise(store.get(id));
 }
 
 export async function add(storeName, value) {
-  const store = await tx(storeName, 'readwrite');
-  const id = await reqToPromise(store.add(value));
+  const { store, tx } = await tx(storeName, 'readwrite');
+  const id = await reqWithTx(store.add(value), tx);
+  notificarCambio();
   return id;
 }
 
 export async function put(storeName, value) {
-  const store = await tx(storeName, 'readwrite');
-  return reqToPromise(store.put(value));
+  const { store, tx } = await tx(storeName, 'readwrite');
+  const r = await reqWithTx(store.put(value), tx);
+  notificarCambio();
+  return r;
 }
 
 export async function remove(storeName, id) {
-  const store = await tx(storeName, 'readwrite');
-  return reqToPromise(store.delete(id));
+  const { store, tx } = await tx(storeName, 'readwrite');
+  const r = await reqWithTx(store.delete(id), tx);
+  notificarCambio();
+  return r;
 }
 
 export async function clear(storeName) {
-  const store = await tx(storeName, 'readwrite');
-  return reqToPromise(store.clear());
+  const { store, tx } = await tx(storeName, 'readwrite');
+  const r = await reqWithTx(store.clear(), tx);
+  notificarCambio();
+  return r;
 }
 
 export async function getByIndex(storeName, indexName, value) {
-  const store = await tx(storeName);
+  const { store } = await tx(storeName);
   const idx = store.index(indexName);
   return reqToPromise(idx.getAll(value));
 }
 
 export async function count(storeName) {
-  const store = await tx(storeName);
+  const { store } = await tx(storeName);
   return reqToPromise(store.count());
 }
 
@@ -227,6 +283,7 @@ export async function importAll(backup, { merge = false } = {}) {
     (d.inventario || []).forEach((r) => t.objectStore(STORES.inventario).put(r));
     (d.config || []).forEach((r) => t.objectStore(STORES.config).put(r));
   });
+  notificarCambio();
 }
 
 /**
@@ -245,6 +302,7 @@ export async function resetAll() {
     req.onblocked = () => resolve(); // continúa aunque otra pestaña la tenga abierta
   });
   await openDB(); // recrea los almacenes vacíos con contadores en cero
+  notificarCambio();
 }
 
 export default {

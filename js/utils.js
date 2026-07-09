@@ -145,9 +145,16 @@ export function abrirModal(titulo, contenido) {
 export function cerrarModal() {
   const modal = document.getElementById('modal');
   if (!modal) return;
+  const estabaAbierto = !modal.hidden;
   modal.hidden = true;
   document.body.style.overflow = '';
   document.getElementById('modalBody').innerHTML = '';
+  // ROBUSTEZ v2.2: notifica a app.js que el modal se cerró, para que pueda
+  // ejecutar una recarga pendiente del Service Worker (que se pospuso para
+  // no perder datos del formulario a mitad de captura).
+  if (estabaAbierto) {
+    try { document.dispatchEvent(new CustomEvent('modal-cerrado')); } catch (e) { /* noop */ }
+  }
 }
 
 /** Confirmación accesible con botones grandes. Devuelve Promise<boolean>. */

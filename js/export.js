@@ -55,27 +55,130 @@ export async function importarJSON(file, opciones = {}) {
   return backup;
 }
 
-/* ---------- Respaldo automático (a localStorage como red de seguridad) ---------- */
-export async function respaldoAutomatico() {
-  const cfg = await getConfig();
-  if (!cfg.respaldoAuto) return;
-  const backup = await dumpAll();
+/* ---------- Respaldo automático (a localStorage como red de seguridad) ----------
+ *
+ * ROBUSTEZ v2.2: Se mantienen hasta MAX_SNAPSHOTS respaldos rotativos en
+ * localStorage (claves aquagestion_backup_auto_N). Antes se sobrescribía
+ * uno solo, lo cual significaba que si el último arranque pisaba un
+ * respaldo bueno con uno corrupto o vacío, se perdía la única red de
+ * seguridad. Ahora siempre quedan los 3 más recientes.
+ *
+ * Compatibilidad: obtenerRespaldoAutoInfo() y restaurarRespaldoAuto()
+ * siguen operando sobre el más reciente (índice 0), así que la UI de
+ * Configuración no necesita cambios.
+ */
+const MAX_SNAPSHOTS = 3;
+const LS_PREFIX = 'aquagestion_backup_auto_';
+const LS_FECHA_PREFIX = 'aquagestion_backup_auto_fecha_';
+
+function leerSnapshotEn(idx) {
   try {
-    localStorage.setItem('aquagestion_backup_auto', JSON.stringify(backup));
-    localStorage.setItem('aquagestion_backup_auto_fecha', new Date().toISOString());
+    const raw = localStorage.getItem(LS_PREFIX + idx);
+    const fecha = localStorage.getItem(LS_FECHA_PREFIX + idx);
+    if (!raw) return null;
+    return { idx, fecha, backup: JSON.parse(raw) };
+  } catch (e) { return null; }
+}
+
+function escribirSnapshotEn(idx, backup, fechaIso) {
+  try {
+    localStorage.setItem(LS_PREFIX + idx, JSON.stringify(backup));
+    localStorage.setItem(LS_FECHA_PREFIX + idx, fechaIso);
+    return true;
   } catch (e) {
-    console.warn('No se pudo guardar respaldo automático local', e);
+    console.warn('No se pudo guardar respaldo automático local (snapshot ' + idx + ')', e);
+    return false;
   }
 }
 
+function rotarSnapshots() {
+  // Mueve cada snapshot al siguiente índice, descartando el más viejo.
+  for (let i = MAX_SNAPSHOTS - 1; i > 0; i--) {
+    const cur = leerSnapshotEn(i - 1);
+    if (!cur) continue;
+    try {
+      localStorage.setItem(LS_PREFIX + i, JSON.stringify(cur.backup));
+      localStorage.setItem(LS_FECHA_PREFIX + i, cur.fecha || '');
+    } catch (e) { /* si cuota llena, paramos la rotación */ break; }
+  }
+  // Limpia el índice 0 (lo reescribiremos justo después).
+  try {
+    localStorage.removeItem(LS_PREFIX + '0');
+    localStorage.removeItem(LS_FECHA_PREFIX + '0');
+  } catch (e) { /* noop */ }
+
+  // Migración: si existe el respaldo viejo (sin índice), muévelo al slot 0.
+  try {
+    const viejo = localStorage.getItem('aquagestion_backup_auto');
+    const viejoFecha = localStorage.getItem('aquagestion_backup_auto_fecha');
+    if (viejo && !leerSnapshotEn(1)) {
+      localStorage.setItem(LS_PREFIX + '1', viejo);
+      localStorage.setItem(LS_FECHA_PREFIX + '1', viejoFecha || '');
+      localStorage.removeItem('aquagestion_backup_auto');
+      localStorage.removeItem('aquagestion_backup_auto_fecha');
+    }
+  } catch (e) { /* noop */ }
+}
+
+export async function respaldoAutomatico() {
+  // NOTA: la decisión de si se dispara o no se toma en app.js según la
+  // configuración del usuario. Esta función siempre hace el snapshot cuando
+  // se la invoca (se usa tanto al abrir la app como tras cambios en la DB).
+  const backup = await dumpAll();
+  rotarSnapshots();
+  escribirSnapshotEn(0, backup, new Date().toISOString());
+
+  // Limpieza de snapshots más allá de MAX_SNAPSHOTS (por si migración dejó restos).
+  for (let i = MAX_SNAPSHOTS; i < MAX_SNAPSHOTS + 2; i++) {
+    try {
+      localStorage.removeItem(LS_PREFIX + i);
+      localStorage.removeItem(LS_FECHA_PREFIX + i);
+    } catch (e) { /* noop */ }
+  }
+  return backup;
+}
+
 export function obtenerRespaldoAutoInfo() {
+  const s0 = leerSnapshotEn(0);
+  if (s0 && s0.fecha) return { fecha: s0.fecha, legible: fechaHoraLegible(s0.fecha) };
+  // Compatibilidad con respaldo viejo sin índice.
   const fecha = localStorage.getItem('aquagestion_backup_auto_fecha');
   return fecha ? { fecha, legible: fechaHoraLegible(fecha) } : null;
 }
 
+/**
+ * Lista todos los snapshots disponibles con su índice y fecha, del más nuevo
+ * al más viejo. Útil para mostrar un selector en la UI de restauración.
+ */
+export function listarRespaldosAuto() {
+  const out = [];
+  for (let i = 0; i < MAX_SNAPSHOTS; i++) {
+    const s = leerSnapshotEn(i);
+    if (s && s.fecha) {
+      out.push({ idx: i, fecha: s.fecha, legible: fechaHoraLegible(s.fecha) });
+    }
+  }
+  // Compatibilidad: respaldo viejo sin índice.
+  const viejoFecha = localStorage.getItem('aquagestion_backup_auto_fecha');
+  if (viejoFecha && out.length === 0) {
+    out.push({ idx: -1, fecha: viejoFecha, legible: fechaHoraLegible(viejoFecha) });
+  }
+  return out;
+}
+
 export async function restaurarRespaldoAuto() {
-  const raw = localStorage.getItem('aquagestion_backup_auto');
-  if (!raw) throw new Error('No hay respaldo automático disponible');
+  // Por defecto restaura el más reciente (índice 0).
+  return restaurarRespaldoAutoEn(0);
+}
+
+export async function restaurarRespaldoAutoEn(idx) {
+  let raw;
+  if (idx === -1) {
+    raw = localStorage.getItem('aquagestion_backup_auto'); // legacy
+  } else {
+    raw = localStorage.getItem(LS_PREFIX + idx);
+  }
+  if (!raw) throw new Error('No hay respaldo automático disponible en el índice ' + idx);
   await importAll(JSON.parse(raw));
 }
 
@@ -276,5 +379,6 @@ export async function exportarPDF(nombreArchivo, tituloDoc, secciones) {
 export default {
   exportarJSON, compartirRespaldo, importarJSON, leerArchivoTexto,
   respaldoAutomatico, obtenerRespaldoAutoInfo, restaurarRespaldoAuto,
+  restaurarRespaldoAutoEn, listarRespaldosAuto,
   generarCSV, exportarCSV, exportarExcel, exportarExcelCompleto, exportarPDF
 };

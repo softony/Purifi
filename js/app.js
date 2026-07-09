@@ -1,6 +1,16 @@
 /**
  * app.js — Punto de entrada: registro del Service Worker, enrutador por hash,
  * navegación (sidenav + bottomnav), estado de conexión y respaldo automático.
+ *
+ * ROBUSTEZ v2.2:
+ *  - El respaldo automático se dispara también al detectar cambios en IndexedDB
+ *    (evento 'db:changed'), no solo al abrir la app. Antes, los datos capturados
+ *    durante el día nunca se respaldaban hasta el siguiente arranque.
+ *  - Antes de recargar la página por una actualización del Service Worker, se
+ *    verifica que no haya un modal abierto (formulario a mitad de captura). Si
+ *    lo hay, se pospone la recarga hasta que se cierre.
+ *  - Se agrega flush de respaldo en visibilitychange (hidden) y pagehide para
+ *    proteger los datos cuando el usuario oculta o cierra la pestaña.
  */
 import { getConfig, setConfigBulk } from './db.js';
 import { setMoneda, $, $$, toast, el, esc, abrirModal, cerrarModal } from './utils.js';
@@ -36,6 +46,20 @@ const view = document.getElementById('view');
 const viewTitle = document.getElementById('viewTitle');
 
 /* ---------- Service Worker ---------- */
+
+/** ¿Hay un modal abierto (formulario de captura en curso)? */
+function hayModalAbierto() {
+  const m = document.getElementById('modal');
+  return m && !m.hidden;
+}
+
+function hayCambiosSinGuardarPendientes() {
+  // Detecta cualquier modal abierto (formularios de pedido, pago, cliente, etc.)
+  // o cualquier textarea/input modificado en el DOM principal.
+  if (hayModalAbierto()) return true;
+  return false;
+}
+
 function registrarSW() {
   if (!('serviceWorker' in navigator)) return;
 
@@ -43,12 +67,35 @@ function registrarSW() {
   // Si lo había, un cambio de controlador significa que se instaló una
   // versión NUEVA de la app: recargamos una sola vez para servir los
   // archivos actualizados (evita quedarse con una versión vieja en caché).
+  //
+  // ROBUSTEZ v2.2: si hay un modal abierto (formulario a mitad de captura),
+  // posponemos la recarga para no perder los datos no guardados. Se reintenta
+  // cada 1.5 s hasta que el modal se cierre.
   const habiaControlador = !!navigator.serviceWorker.controller;
   let recargando = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (recargando || !habiaControlador) return;
+  let recargaPendiente = false;
+
+  function intentarRecargar() {
+    if (recargando) return;
+    if (hayCambiosSinGuardarPendientes()) {
+      recargaPendiente = true;
+      setTimeout(intentarRecargar, 1500);
+      return;
+    }
+    recargaPendiente = false;
     recargando = true;
     window.location.reload();
+  }
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!habiaControlador) return;
+    intentarRecargar();
+  });
+
+  // Si el usuario cierra el modal mientras hay una recarga pendiente,
+  // se dispara automáticamente en el siguiente intento.
+  document.addEventListener('modal-cerrado', () => {
+    if (recargaPendiente) intentarRecargar();
   });
 
   window.addEventListener('load', () => {
@@ -175,6 +222,48 @@ function configuracionInicial(cfg) {
   abrirModal('Configuración inicial', f);
 }
 
+/* ---------- Respaldo automático reactivo a cambios ---------- */
+let _debounceRespaldo = null;
+let _respaldoEnCurso = false;
+
+function programarRespaldoTrasCambio() {
+  if (_debounceRespaldo) clearTimeout(_debounceRespaldo);
+  _debounceRespaldo = setTimeout(async () => {
+    _debounceRespaldo = null;
+    if (_respaldoEnCurso) return;
+    _respaldoEnCurso = true;
+    try {
+      // Verificamos el flag de configuración en cada disparo: si el usuario
+      // lo desactivó, no hacemos snapshot (pero el de "al abrir" sigue activo
+      // si está habilitado).
+      const cfg = await getConfig();
+      if (cfg.respaldoAuto === false) return;
+      await respaldoAutomatico();
+    } catch (e) {
+      console.warn('Respaldo automático tras cambio falló:', e);
+    } finally {
+      _respaldoEnCurso = false;
+    }
+  }, 2000); // 2 s de debounce: agrupa varias escrituras seguidas en un solo snapshot
+}
+
+function flushRespaldoInmediato() {
+  // Para pagehide / visibilitychange=hidden: dispara sin debounce y de forma
+  // best-effort (no bloquea el cierre de la pestaña).
+  if (_debounceRespaldo) { clearTimeout(_debounceRespaldo); _debounceRespaldo = null; }
+  if (_respaldoEnCurso) return;
+  _respaldoEnCurso = true;
+  // sendBeacon-style: usamos setTimeout(0) para no bloquear el unload.
+  setTimeout(async () => {
+    try {
+      const cfg = await getConfig();
+      if (cfg.respaldoAuto === false) return;
+      await respaldoAutomatico();
+    } catch (e) { /* best-effort */ }
+    finally { _respaldoEnCurso = false; }
+  }, 0);
+}
+
 /* ---------- Inicio ---------- */
 async function init() {
   registrarSW();
@@ -207,6 +296,21 @@ async function init() {
   window.addEventListener('offline', actualizarEstadoRed);
   actualizarEstadoRed();
 
+  // ROBUSTEZ v2.2: respaldo automático reactivo a cambios en IndexedDB.
+  // Cada vez que se persiste un add/put/remove, db.js emite 'db:changed'.
+  // Esperamos 2 s (debounce) y hacemos un snapshot si el flag está activo.
+  window.addEventListener('db:changed', programarRespaldoTrasCambio);
+
+  // ROBUSTEZ v2.2: flush de respaldo cuando la pestaña se oculta o cierra.
+  // Es lo que realmente protege los datos en móviles (iOS Safari mata la
+  // pestaña en background; Android puede cerrarla por presión de RAM).
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushRespaldoInmediato();
+  });
+  window.addEventListener('pagehide', flushRespaldoInmediato);
+  // beforeunload como último refugio en navegadores que no disparan pagehide.
+  window.addEventListener('beforeunload', flushRespaldoInmediato);
+
   // Mostrar interfaz
   document.getElementById('app-loader').remove();
   document.getElementById('topbar').hidden = false;
@@ -219,7 +323,9 @@ async function init() {
   if (cfg && cfg.configurado === false) configuracionInicial(cfg);
 
   // Respaldo automático (silencioso) al iniciar si está activado
-  respaldoAutomatico().catch(() => {});
+  try {
+    if (cfg.respaldoAuto !== false) await respaldoAutomatico();
+  } catch (e) { /* primera vez, sin datos aún */ }
 }
 
 // API global para que las vistas puedan navegar fácilmente
