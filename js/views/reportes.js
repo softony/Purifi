@@ -4,12 +4,13 @@
 import { STORES, getAll } from '../db.js';
 import {
   el, $, dinero, numero, hoyISO, fechaLegible, inicioSemanaISO, inicioMesISO,
-  nombreMes, toast, folioCliente
+  nombreMes, toast, folioCliente, TAMANOS_GARRAFON, tamanoPedido
 } from '../utils.js';
 import {
   ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes,
   totalGastos, gastosPorCategoria, esVentaPedido,
-  stockGarrafones, seguimientoClientes, clientesPorColonia, inteligenciaPorGarrafon
+  stockGarrafones, seguimientoClientes, clientesPorColonia, inteligenciaPorGarrafon,
+  garrafonesPorTamano
 } from '../services.js';
 import { exportarExcel, exportarPDF, exportarCSV } from '../export.js';
 
@@ -33,6 +34,8 @@ async function calcular() {
   const enRango = filtrarPorFecha(entregados, desde, hasta);
   const totalVentas = enRango.reduce((s, p) => s + (Number(p.total) || 0), 0);
   const totalGarrafones = enRango.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  // v2.3: desglose por tamaño en el periodo
+  const porTamano = garrafonesPorTamano(enRango);
 
   const [frecuentes, saldos, mapa] = await Promise.all([
     clientesMasFrecuentes(10), saldosTodos(), mapaClientes()
@@ -52,9 +55,24 @@ async function calcular() {
 
   _datos = {
     desde, hasta, titulo, porDia, totalVentas, totalGarrafones, pedidos: enRango.length,
+    porTamano, enRango,
     frecuentes, deudores, gastosPeriodo, gastosCat, utilidad
   };
   return _datos;
+}
+
+/** Tabla de garrafones por tamaño en el periodo (v2.3). */
+function tablaPorTamano(d) {
+  const wrap = el('div', { class: 'table-wrap' });
+  const t = el('table', { class: 'data' });
+  const filas = TAMANOS_GARRAFON.map((t2) => `<tr><td><strong>${esc(t2)}</strong></td><td>${numero(d.porTamano[t2] || 0)}</td><td>${((d.porTamano[t2] || 0) / (d.totalGarrafones || 1) * 100).toFixed(1)}%</td></tr>`).join('');
+  t.innerHTML = `
+    <thead><tr><th>Tamaño</th><th>Garrafones</th><th>% del periodo</th></tr></thead>
+    <tbody>${filas}</tbody>
+    <tfoot><tr><th>TOTAL</th><th>${numero(d.totalGarrafones)}</th><th>100%</th></tr></tfoot>
+  `;
+  wrap.appendChild(t);
+  return wrap;
 }
 
 function tablaVentas(d) {
@@ -141,6 +159,14 @@ function expExcel() {
       rows: d.porDia.map((r) => ({ Fecha: r.fecha, Pedidos: r.pedidos, Garrafones: r.garrafones, Total: r.total })),
     },
     {
+      nombre: 'Garrafones por tamano',
+      rows: TAMANOS_GARRAFON.map((t) => ({ Tamano: t, Garrafones: d.porTamano[t] || 0, Porcentaje: (((d.porTamano[t] || 0) / (d.totalGarrafones || 1)) * 100).toFixed(1) + '%' })),
+    },
+    {
+      nombre: 'Pedidos detallados',
+      rows: d.enRango.map((p) => ({ Fecha: p.fecha, Tamano: tamanoPedido(p), Cantidad: p.cantidad, PrecioUnit: p.precioUnit, Total: p.total, Estado: p.estado, Pagado: p.pagado ? 'Sí' : 'No' })),
+    },
+    {
       nombre: 'Clientes frecuentes',
       rows: d.frecuentes.filter((x) => x.pedidos > 0).map((x) => ({ 'N.º': folioCliente(x.cliente) || '', Cliente: x.cliente.nombre, Pedidos: x.pedidos, Garrafones: x.garrafones })),
     },
@@ -173,6 +199,12 @@ async function expPDF() {
       columns: [{ label: 'Fecha' }, { label: 'Pedidos' }, { label: 'Garrafones' }, { label: 'Total' }],
       rows: d.porDia.map((r) => [fechaLegible(r.fecha), r.pedidos, r.garrafones, dinero(r.total)]),
       resumen: `Total del periodo: ${dinero(d.totalVentas)} · ${numero(d.totalGarrafones)} garrafones · ${numero(d.pedidos)} pedidos.`
+    },
+    {
+      titulo: 'Garrafones por tamaño',
+      columns: [{ label: 'Tamaño' }, { label: 'Garrafones' }, { label: '% del periodo' }],
+      rows: TAMANOS_GARRAFON.map((t) => [t, numero(d.porTamano[t] || 0), (((d.porTamano[t] || 0) / (d.totalGarrafones || 1)) * 100).toFixed(1) + '%']),
+      resumen: `Total: ${numero(d.totalGarrafones)} garrafones entregados en el periodo.`
     },
     {
       titulo: 'Gastos por categoría',
@@ -292,6 +324,7 @@ async function pintar(root) {
   ]));
 
   body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '📈 ' + d.titulo }), tablaVentas(d)]));
+  body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '🛢️ Garrafones por tamaño' }), tablaPorTamano(d)]));
   body.appendChild(tarjetaBalance(d));
   body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '🧾 Gastos por categoría' }), tablaGastos(d)]));
   body.appendChild(el('div', { class: 'card' }, [el('h3', { text: '⭐ Clientes más frecuentes' }), tablaFrecuentes(d)]));

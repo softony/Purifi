@@ -4,7 +4,7 @@
  * Usa librerías vendorizadas (SheetJS, jsPDF + AutoTable) cacheadas para offline.
  */
 import { dumpAll, importAll, getConfig, setConfig, STORES, getAll } from './db.js';
-import { descargarArchivo, hoyISO, toast, fechaHoraLegible } from './utils.js';
+import { descargarArchivo, hoyISO, toast, fechaHoraLegible, TAMANOS_GARRAFON, tamanoPedido } from './utils.js';
 
 /* ---------- Respaldo completo JSON ---------- */
 export async function exportarJSON() {
@@ -264,10 +264,11 @@ export async function exportarExcelCompleto() {
     },
     {
       nombre: 'Pedidos',
-      rows: pedidos.map((p) => ({ ...p, cliente: mapaCliente.get(p.clienteId) || '—' })),
+      rows: pedidos.map((p) => ({ ...p, cliente: mapaCliente.get(p.clienteId) || '—', tamano: tamanoPedido(p) })),
       columns: [
         { key: 'id', label: 'ID' }, { key: 'fecha', label: 'Fecha' },
-        { key: 'cliente', label: 'Cliente' }, { key: 'cantidad', label: 'Garrafones' },
+        { key: 'cliente', label: 'Cliente' }, { key: 'tamano', label: 'Tamaño' },
+        { key: 'cantidad', label: 'Garrafones' },
         { key: 'precioUnit', label: 'Precio Unit.' }, { key: 'total', label: 'Total' },
         { key: 'estado', label: 'Estado' }, { key: 'metodoPago', label: 'Método de pago' },
         { key: 'observaciones', label: 'Observaciones' }
@@ -303,11 +304,26 @@ export async function exportarExcelCompleto() {
     },
     {
       nombre: 'Inventario',
-      rows: inventario,
+      rows: inventario.map((m) => ({
+        ...m,
+        tamano: m.tamano || '19L',
+        nuevos20L: m.nuevosPorTamano?.['20L'] || 0,
+        nuevos19L: m.nuevosPorTamano?.['19L'] || 0,
+        nuevos12L: m.nuevosPorTamano?.['12L'] || 0,
+        nuevos10L: m.nuevosPorTamano?.['10L'] || 0,
+        usados20L: m.usadosPorTamano?.['20L'] || 0,
+        usados19L: m.usadosPorTamano?.['19L'] || 0,
+        usados12L: m.usadosPorTamano?.['12L'] || 0,
+        usados10L: m.usadosPorTamano?.['10L'] || 0
+      })),
       columns: [
         { key: 'id', label: 'ID' }, { key: 'fecha', label: 'Fecha' },
-        { key: 'tipo', label: 'Tipo' }, { key: 'cantidad', label: 'Cantidad' },
-        { key: 'nuevos', label: 'Δ Nuevos' }, { key: 'usados', label: 'Δ Usados' },
+        { key: 'tipo', label: 'Tipo' }, { key: 'tamano', label: 'Tamaño' },
+        { key: 'cantidad', label: 'Cantidad' },
+        { key: 'nuevos20L', label: 'Δ Nuevos 20L' }, { key: 'nuevos19L', label: 'Δ Nuevos 19L' },
+        { key: 'nuevos12L', label: 'Δ Nuevos 12L' }, { key: 'nuevos10L', label: 'Δ Nuevos 10L' },
+        { key: 'usados20L', label: 'Δ Usados 20L' }, { key: 'usados19L', label: 'Δ Usados 19L' },
+        { key: 'usados12L', label: 'Δ Usados 12L' }, { key: 'usados10L', label: 'Δ Usados 10L' },
         { key: 'concepto', label: 'Concepto' }, { key: 'pedidoId', label: 'Pedido' }
       ]
     }

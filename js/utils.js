@@ -263,3 +263,40 @@ export const FRECUENCIA_DIAS = {
   'Quincenal': 15,
   'Mensual': 30
 };
+
+/* ---------- Tamaños de garrafón (v2.3) ----------
+ * La purificadora vende garrafones de distintos tamaños. El de 19L es el
+ * más común y era el único que la app manejaba originalmente. El orden es
+ * de mayor a menor para que el selector los muestre así.
+ */
+export const TAMANOS_GARRAFON = ['20L', '19L', '12L', '10L'];
+
+/** Tamaño por defecto (también se asigna a los pedidos históricos sin tamaño). */
+export const TAMANO_DEFAULT = '19L';
+
+/** Precios sugeridos por tamaño (editable en Configuración y por pedido). */
+export const PRECIOS_DEFAULT_POR_TAMANO = {
+  '20L': 25,
+  '19L': 20,
+  '12L': 12,
+  '10L': 10
+};
+
+/** Precios de canje sugeridos por tamaño. */
+export const PRECIOS_CANJE_DEFAULT_POR_TAMANO = {
+  '20L': 60,
+  '19L': 50,
+  '12L': 30,
+  '10L': 25
+};
+
+/** ¿Es un tamaño válido? */
+export function esTamanoValido(t) {
+  return TAMANOS_GARRAFON.includes(t);
+}
+
+/** Normaliza el tamaño de un pedido: si falta o es inválido, devuelve el default. */
+export function tamanoPedido(p) {
+  if (!p) return TAMANO_DEFAULT;
+  return esTamanoValido(p.tamano) ? p.tamano : TAMANO_DEFAULT;
+}

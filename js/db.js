@@ -24,7 +24,7 @@
  */
 
 const DB_NAME = 'aquagestion';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 /* ---------- EventBus interno: emite 'db:changed' en cada escritura ---------- */
 let _changeDebounce = null;
@@ -59,6 +59,7 @@ function openDB() {
 
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
+      const txUpgrade = e.target.transaction; // transacción de upgrade (viva durante el upgrade)
 
       if (!db.objectStoreNames.contains(STORES.clientes)) {
         const s = db.createObjectStore(STORES.clientes, { keyPath: 'id', autoIncrement: true });
@@ -72,6 +73,13 @@ function openDB() {
         s.createIndex('clienteId', 'clienteId', { unique: false });
         s.createIndex('fecha', 'fecha', { unique: false });
         s.createIndex('estado', 'estado', { unique: false });
+        s.createIndex('tamano', 'tamano', { unique: false }); // v5: índice por tamaño
+      } else if (txUpgrade) {
+        // v5: si el store ya existía, agregar el índice tamano si falta.
+        const store = txUpgrade.objectStore(STORES.pedidos);
+        if (!store.indexNames.contains('tamano')) {
+          try { store.createIndex('tamano', 'tamano', { unique: false }); } catch (err) { /* noop */ }
+        }
       }
 
       if (!db.objectStoreNames.contains(STORES.pagos)) {
@@ -110,6 +118,57 @@ function openDB() {
 
       if (!db.objectStoreNames.contains(STORES.config)) {
         db.createObjectStore(STORES.config, { keyPath: 'clave' });
+      }
+
+      // v5: MIGRACIÓN DE DATOS — pedidos existentes sin tamano -> '19L'
+      // (tamanoPedido() ya lo hace en lectura, pero materializarlo en disco
+      // permite que el índice funcione y que las consultas por tamaño sean
+      // eficientes. También migra el inventario al formato por tamaño.)
+      if (txUpgrade && e.oldVersion < 5) {
+        try {
+          // 1) Pedidos: agregar tamano='19L' donde falte
+          const pedStore = txUpgrade.objectStore(STORES.pedidos);
+          pedStore.openCursor().onsuccess = (ev) => {
+            const cursor = ev.target.result;
+            if (!cursor) return;
+            const v = cursor.value;
+            if (!v.tamano) {
+              v.tamano = '19L';
+              cursor.update(v);
+            }
+            cursor.continue();
+          };
+
+          // 2) Inventario: migrar nuevos/usados (escalares) a nuevosPorTamano/usadosPorTamano (objetos)
+          // Mantenemos los campos viejos por compatibilidad hacia atrás en el mismo ciclo.
+          const invStore = txUpgrade.objectStore(STORES.inventario);
+          invStore.openCursor().onsuccess = (ev) => {
+            const cursor = ev.target.result;
+            if (!cursor) return;
+            const v = cursor.value;
+            let changed = false;
+            if (!v.nuevosPorTamano) {
+              // El campo viejo 'nuevos' era un delta escalar (ej. +5 o -3); lo asignamos todo a 19L.
+              const viejo = Number(v.nuevos) || 0;
+              v.nuevosPorTamano = { '20L': 0, '19L': viejo, '12L': 0, '10L': 0 };
+              changed = true;
+            }
+            if (!v.usadosPorTamano) {
+              const viejo = Number(v.usados) || 0;
+              v.usadosPorTamano = { '20L': 0, '19L': viejo, '12L': 0, '10L': 0 };
+              changed = true;
+            }
+            if (!v.tamano) {
+              // El movimiento original era implícitamente de 19L
+              v.tamano = '19L';
+              changed = true;
+            }
+            if (changed) cursor.update(v);
+            cursor.continue();
+          };
+        } catch (migErr) {
+          console.warn('Migración v5 (tamaños) falló parcialmente:', migErr);
+        }
       }
     };
 
@@ -217,9 +276,24 @@ export async function count(storeName) {
 
 const DEFAULT_CONFIG = {
   negocio: 'Mi Purificadora',
+  // v2.2 legacy (se conservan para compatibilidad con backups viejos):
   precioDomicilio: 20,
   precioVentanilla: 15,
   precioCanje: 50,
+  // v2.3: precios por tamaño (4 tamaños × venta + 4 × canje = 8 precios).
+  // Estos son los defaults sugeridos; el usuario los edita en Configuración.
+  preciosPorTamano: {
+    '20L': 25,
+    '19L': 20,
+    '12L': 12,
+    '10L': 10
+  },
+  preciosCanjePorTamano: {
+    '20L': 60,
+    '19L': 50,
+    '12L': 30,
+    '10L': 25
+  },
   moneda: 'MXN',
   respaldoAuto: true,
   ultimoRespaldo: null,
@@ -230,6 +304,17 @@ export async function getConfig() {
   const rows = await getAll(STORES.config);
   const cfg = { ...DEFAULT_CONFIG };
   rows.forEach((r) => { cfg[r.clave] = r.valor; });
+  // Migración suave: si un backup viejo no trae los mapas de precios por tamaño,
+  // los reconstruimos a partir de los precios legacy (todos → 19L) o de los defaults.
+  if (!cfg.preciosPorTamano || typeof cfg.preciosPorTamano !== 'object') {
+    cfg.preciosPorTamano = { ...DEFAULT_CONFIG.preciosPorTamano };
+    // Si había un precioDomicilio legacy, asumimos que era para 19L
+    if (Number(cfg.precioDomicilio) > 0) cfg.preciosPorTamano['19L'] = Number(cfg.precioDomicilio);
+  }
+  if (!cfg.preciosCanjePorTamano || typeof cfg.preciosCanjePorTamano !== 'object') {
+    cfg.preciosCanjePorTamano = { ...DEFAULT_CONFIG.preciosCanjePorTamano };
+    if (Number(cfg.precioCanje) > 0) cfg.preciosCanjePorTamano['19L'] = Number(cfg.precioCanje);
+  }
   return cfg;
 }
 

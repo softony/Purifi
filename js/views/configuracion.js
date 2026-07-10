@@ -2,7 +2,7 @@
  * configuracion.js — Ajustes del negocio, precios, respaldo y export/import.
  */
 import { getConfig, setConfigBulk, resetAll, count, STORES } from '../db.js';
-import { el, $, toast, confirmar, setMoneda, dinero, esc, fechaHoraLegible, abrirModal, cerrarModal } from '../utils.js';
+import { el, $, toast, confirmar, setMoneda, dinero, esc, fechaHoraLegible, abrirModal, cerrarModal, TAMANOS_GARRAFON } from '../utils.js';
 import {
   exportarJSON, compartirRespaldo, importarJSON, exportarExcelCompleto,
   obtenerRespaldoAutoInfo, restaurarRespaldoAuto, respaldoAutomatico
@@ -56,12 +56,26 @@ function confirmarBorradoTotal() {
 
 async function guardarConfig(form) {
   const fd = Object.fromEntries(new FormData(form).entries());
+  // v2.3: precios por tamaño (4 tamaños × venta + canje = 8 precios)
+  const preciosPorTamano = {};
+  const preciosCanjePorTamano = {};
+  TAMANOS_GARRAFON.forEach((t) => {
+    preciosPorTamano[t] = Number(fd['precio_' + t]) || 0;
+    preciosCanjePorTamano[t] = Number(fd['canje_' + t]) || 0;
+  });
+  // Mantenemos los campos legacy por compatibilidad con backups viejos:
+  // - precioDomicilio = precio de 19L (el más común)
+  // - precioVentanilla = idem (no se usa ya en pedidos)
+  // - precioCanje = canje de 19L
   const cfg = {
     negocio: (fd.negocio || '').trim() || 'Mi Purificadora',
-    precioDomicilio: Number(fd.precioDomicilio) || 0,
-    precioVentanilla: Number(fd.precioVentanilla) || 0,
-    precioCanje: Number(fd.precioCanje) || 0,
     moneda: fd.moneda || 'MXN',
+    preciosPorTamano,
+    preciosCanjePorTamano,
+    // Legacy:
+    precioDomicilio: preciosPorTamano['19L'] || 0,
+    precioVentanilla: preciosPorTamano['19L'] || 0,
+    precioCanje: preciosCanjePorTamano['19L'] || 0,
     respaldoAuto: !!form.querySelector('#respaldoAuto').checked
   };
   await setConfigBulk(cfg);
@@ -97,26 +111,33 @@ export async function render(root) {
 
   /* --- Datos del negocio y precios --- */
   const form = el('form', { class: 'form card' });
+  // v2.3: precios por tamaño (4 tamaños × venta + canje = 8 campos).
+  // Cada fila es un tamaño con su precio de venta y de canje editables.
+  const preciosFilas = TAMANOS_GARRAFON.map((t) => {
+    const precioVenta = cfg.preciosPorTamano?.[t] ?? 0;
+    const precioCanje = cfg.preciosCanjePorTamano?.[t] ?? 0;
+    return `
+      <div class="field--row" style="align-items:end">
+        <div class="field" style="flex:0 0 80px">
+          <label style="font-weight:700">${esc(t)}</label>
+          <p class="hint" style="margin:0">Tamaño</p>
+        </div>
+        <div class="field">
+          <label for="precio_${esc(t)}">Precio venta</label>
+          <input id="precio_${esc(t)}" name="precio_${esc(t)}" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(precioVenta)}" />
+        </div>
+        <div class="field">
+          <label for="canje_${esc(t)}">Precio canje</label>
+          <input id="canje_${esc(t)}" name="canje_${esc(t)}" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(precioCanje)}" />
+        </div>
+      </div>`;
+  }).join('');
+
   form.innerHTML = `
     <h3>🏪 Negocio y precios</h3>
     <div class="field">
       <label for="negocio">Nombre del negocio</label>
       <input id="negocio" name="negocio" value="${esc(cfg.negocio)}" placeholder="Mi Purificadora" />
-    </div>
-    <div class="field--row">
-      <div class="field">
-        <label for="precioDomicilio">Precio a domicilio</label>
-        <input id="precioDomicilio" name="precioDomicilio" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioDomicilio)}" />
-      </div>
-      <div class="field">
-        <label for="precioVentanilla">Precio en ventanilla</label>
-        <input id="precioVentanilla" name="precioVentanilla" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioVentanilla)}" />
-      </div>
-    </div>
-    <div class="field">
-      <label for="precioCanje">Precio de canje (por garrafón)</label>
-      <input id="precioCanje" name="precioCanje" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioCanje)}" />
-      <p class="hint" style="margin:4px 0 0">Cargo por cambiar un garrafón usado por uno nuevo. Se usa al registrar canjes en Pedidos.</p>
     </div>
     <div class="field">
       <label for="moneda">Moneda</label>
@@ -124,7 +145,10 @@ export async function render(root) {
         ${['MXN', 'USD', 'GTQ', 'COP', 'ARS', 'PEN', 'CLP'].map((m) => `<option ${cfg.moneda === m ? 'selected' : ''}>${m}</option>`).join('')}
       </select>
     </div>
-    <label class="flex" style="gap:10px">
+    <h4 style="margin:18px 0 6px">🛢️ Precios por tamaño de garrafón</h4>
+    <p class="hint" style="margin:0 0 10px">Edita el precio de venta y de canje para cada tamaño. Al crear un pedido, estos son los valores sugeridos (puedes ajustarlos por pedido).</p>
+    ${preciosFilas}
+    <label class="flex" style="gap:10px;margin-top:14px">
       <input id="respaldoAuto" type="checkbox" ${cfg.respaldoAuto ? 'checked' : ''} style="width:26px;height:26px" />
       <span>Respaldo automático local al abrir la app</span>
     </label>
@@ -199,7 +223,7 @@ export async function render(root) {
   /* --- Acerca de --- */
   root.appendChild(el('div', { class: 'card' }, [
     el('h3', { text: 'ℹ️ Acerca de' }),
-    el('p', { class: 'muted', text: 'AquaGestión v2.2 — PWA para purificadoras. Funciona sin conexión e instalable en el celular.' }),
+    el('p', { class: 'muted', text: 'AquaGestión v2.3 — PWA para purificadoras. Funciona sin conexión e instalable en el celular.' }),
     el('p', { class: 'hint', text: 'Arquitectura preparada para futuras funciones de geolocalización y optimización de rutas.' })
   ]));
 }

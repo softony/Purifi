@@ -1,7 +1,7 @@
 /**
  * dashboard.js — Vista principal con indicadores clave (KPIs).
  */
-import { el, dinero, numero, hoyISO, fechaLegible, diasEntre, CAPACIDAD_DIARIA } from '../utils.js';
+import { el, dinero, numero, hoyISO, fechaLegible, diasEntre, CAPACIDAD_DIARIA, TAMANOS_GARRAFON } from '../utils.js';
 import { resumenDashboard, seguimientoClientes, inteligenciaPorGarrafon } from '../services.js';
 import { getConfig } from '../db.js';
 
@@ -43,6 +43,24 @@ export async function render(root) {
     kpi('⏳', 'Pedidos pendientes', numero(r.pendientes), 'naranja')
   ]);
   root.appendChild(grid2);
+
+  // v2.3: mini-desglose por tamaño (hoy)
+  const desgloseHoy = r.garrafonesPorTamanoHoy || {};
+  const hayDesgloseHoy = TAMANOS_GARRAFON.some((t) => (desgloseHoy[t] || 0) > 0);
+  if (hayDesgloseHoy) {
+    root.appendChild(el('div', { class: 'card', style: 'padding:10px 14px' }, [
+      el('div', { class: 'flex', style: 'justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px' }, [
+        el('span', { html: '<strong>🛢️ Garrafones hoy por tamaño</strong>' }),
+        el('div', { class: 'tag-line', style: 'margin:0' },
+          TAMANOS_GARRAFON.map((t) => {
+            const n = desgloseHoy[t] || 0;
+            if (!n) return null;
+            return el('span', { class: 'badge badge--info', text: `${t}: ${numero(n)}` });
+          }).filter(Boolean)
+        )
+      ])
+    ]));
+  }
 
   // Indicadores ampliados (KPIs de gestión)
   const pct = Math.min(100, Math.round((r.garrafonesHoy / CAPACIDAD_DIARIA) * 100));

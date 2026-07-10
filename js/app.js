@@ -13,7 +13,7 @@
  *    proteger los datos cuando el usuario oculta o cierra la pestaña.
  */
 import { getConfig, setConfigBulk } from './db.js';
-import { setMoneda, $, $$, toast, el, esc, abrirModal, cerrarModal } from './utils.js';
+import { setMoneda, $, $$, toast, el, esc, abrirModal, cerrarModal, TAMANOS_GARRAFON, PRECIOS_DEFAULT_POR_TAMANO, PRECIOS_CANJE_DEFAULT_POR_TAMANO } from './utils.js';
 import { respaldoAutomatico } from './export.js';
 
 import * as dashboard from './views/dashboard.js';
@@ -170,32 +170,34 @@ function actualizarMarca(nombre) {
 function configuracionInicial(cfg) {
   const monedas = ['MXN', 'USD', 'GTQ', 'COP', 'ARS', 'PEN', 'CLP'];
   const f = el('form', { class: 'form' });
+  // v2.3: el modal inicial usa los precios por tamaño. Precarga defaults sensatos
+  // (pueden modificarse después en Configuración).
+  const precios = cfg.preciosPorTamano || PRECIOS_DEFAULT_POR_TAMANO;
+  const preciosCanje = cfg.preciosCanjePorTamano || PRECIOS_CANJE_DEFAULT_POR_TAMANO;
+  const filasPrecios = TAMANOS_GARRAFON.map((t) => `
+    <div class="field--row" style="align-items:end">
+      <div class="field" style="flex:0 0 60px">
+        <label style="font-weight:700">${esc(t)}</label>
+      </div>
+      <div class="field">
+        <label for="iPrecio_${esc(t)}">Precio venta</label>
+        <input id="iPrecio_${esc(t)}" name="precio_${esc(t)}" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(precios[t] ?? 0)}" />
+      </div>
+    </div>`).join('');
+
   f.innerHTML = `
     <p class="hint">👋 ¡Bienvenido! Configura los datos de tu purificadora para empezar. Podrás cambiarlos cuando quieras en <strong>Configuración</strong>.</p>
     <div class="field">
       <label for="iNegocio">Nombre del negocio *</label>
       <input id="iNegocio" name="negocio" required placeholder="Ej. Purificadora Las Peques" />
     </div>
-    <div class="field--row">
-      <div class="field">
-        <label for="iDom">Precio a domicilio</label>
-        <input id="iDom" name="precioDomicilio" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioDomicilio)}" />
-      </div>
-      <div class="field">
-        <label for="iVen">Precio en ventanilla</label>
-        <input id="iVen" name="precioVentanilla" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioVentanilla)}" />
-      </div>
+    <div class="field">
+      <label for="iMon">Moneda</label>
+      <select id="iMon" name="moneda">${monedas.map((m) => `<option ${cfg.moneda === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
     </div>
-    <div class="field--row">
-      <div class="field">
-        <label for="iCan">Precio de canje</label>
-        <input id="iCan" name="precioCanje" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(cfg.precioCanje)}" />
-      </div>
-      <div class="field">
-        <label for="iMon">Moneda</label>
-        <select id="iMon" name="moneda">${monedas.map((m) => `<option ${cfg.moneda === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
-      </div>
-    </div>
+    <h4 style="margin:14px 0 6px">🛢️ Precios por tamaño de garrafón</h4>
+    <p class="hint" style="margin:0 0 8px">Estos son valores sugeridos. Edítalos si tu purificadora tiene precios distintos.</p>
+    ${filasPrecios}
     <div class="form__actions">
       <button type="submit" class="btn btn--primary btn--lg btn--block">Empezar</button>
     </div>
@@ -205,12 +207,21 @@ function configuracionInicial(cfg) {
     const fd = Object.fromEntries(new FormData(f).entries());
     const negocio = (fd.negocio || '').trim() || 'Mi Purificadora';
     const moneda = fd.moneda || 'MXN';
+    // Construye los mapas de precios por tamaño (venta + canje).
+    const preciosPorTamano = {};
+    const preciosCanjePorTamano = { ...PRECIOS_CANJE_DEFAULT_POR_TAMANO };
+    TAMANOS_GARRAFON.forEach((t) => {
+      preciosPorTamano[t] = Number(fd['precio_' + t]) || 0;
+    });
     await setConfigBulk({
       negocio,
-      precioDomicilio: Number(fd.precioDomicilio) || 0,
-      precioVentanilla: Number(fd.precioVentanilla) || 0,
-      precioCanje: Number(fd.precioCanje) || 0,
       moneda,
+      preciosPorTamano,
+      preciosCanjePorTamano,
+      // Legacy (para que los backups viejos sigan siendo coherentes):
+      precioDomicilio: preciosPorTamano['19L'] || 0,
+      precioVentanilla: preciosPorTamano['19L'] || 0,
+      precioCanje: preciosCanjePorTamano['19L'] || 0,
       configurado: true
     });
     setMoneda(moneda);

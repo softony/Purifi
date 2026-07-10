@@ -1,10 +1,16 @@
 /**
  * pedidos.js — Registro y seguimiento de pedidos de garrafones.
+ *
+ * v2.3: cada pedido lleva un `tamano` (20L, 19L, 12L, 10L). El precio
+ * sugerido al crear/editar se toma de `cfg.preciosPorTamano[tamano]`, pero
+ * el usuario puede editarlo libremente. El canje también funciona por tamaño:
+ * al entregar, se descuenta 1 garrafón nuevo de ese tamaño en el inventario.
  */
 import { STORES, getAll, add, put, remove, getByIndex, getConfig } from '../db.js';
 import {
   el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
-  dinero, numero, hoyISO, fechaLegible, METODOS_PAGO, ESTADOS_PEDIDO, folioCliente
+  dinero, numero, hoyISO, fechaLegible, METODOS_PAGO, ESTADOS_PEDIDO, folioCliente,
+  TAMANOS_GARRAFON, TAMANO_DEFAULT, tamanoPedido
 } from '../utils.js';
 import { mapaClientes } from '../services.js';
 
@@ -29,11 +35,13 @@ function tarjetaPedido(p) {
   const cli = _mapa.get(p.clienteId);
   const nombre = cli ? cli.nombre : '— Cliente eliminado —';
   const folio = cli ? folioCliente(cli) : null;
+  const tam = tamanoPedido(p);
   const main = el('div', { class: 'item__main' }, [
-    el('div', { class: 'item__title', html: `${folio ? `<span class="num-inline">N.º ${folio}</span> ` : ''}${esc(nombre)} · ${numero(p.cantidad)} garrafón(es)` }),
+    el('div', { class: 'item__title', html: `${folio ? `<span class="num-inline">N.º ${folio}</span> ` : ''}${esc(nombre)} · ${numero(p.cantidad)} × ${esc(tam)}` }),
     el('div', { class: 'item__meta', html: `${esc(fechaLegible(p.fecha))} · ${esc(p.metodoPago || '')} · <strong>${dinero(p.total)}</strong>` }),
     el('div', { class: 'tag-line mt' }, [
       estadoCobroBadge(p),
+      el('span', { class: 'badge badge--info', text: '🛢️ ' + tam }),
       p.canjeCantidad ? el('span', { class: 'badge badge--info', text: `🔄 ${p.canjeCantidad} canje` }) : null,
       p.observaciones ? el('span', { class: 'badge badge--info', text: '📝 ' + p.observaciones.slice(0, 20) }) : null
     ])
@@ -52,8 +60,9 @@ function tarjetaPedido(p) {
 
 function marcarEntregado(p) {
   const cli = _mapa.get(p.clienteId);
+  const tam = tamanoPedido(p);
   const cont = el('div', {}, [
-    el('p', { class: 'confirm__msg', html: `Entrega para <strong>${esc(cli ? cli.nombre : 'cliente')}</strong> · ${numero(p.cantidad)} garrafón(es)<br>Total: <strong>${dinero(p.total)}</strong>` }),
+    el('p', { class: 'confirm__msg', html: `Entrega para <strong>${esc(cli ? cli.nombre : 'cliente')}</strong> · ${numero(p.cantidad)} × ${esc(tam)}<br>Total: <strong>${dinero(p.total)}</strong>` }),
     el('p', { class: 'muted', text: '¿Se cobró este pedido al momento de entregar?' }),
     el('div', { class: 'confirm__actions', style: 'flex-direction:column;gap:10px' }, [
       el('button', { class: 'btn btn--success btn--lg', html: `💵 Sí, pagó (${dinero(p.total)})`, onclick: () => confirmarEntrega(p, true) }),
@@ -94,20 +103,33 @@ function calcularTotal(f, precioCanje) {
   return total;
 }
 
-/** Sincroniza el movimiento de inventario por canje ligado a un pedido. */
+/** Sincroniza el movimiento de inventario por canje ligado a un pedido.
+ *  v2.3: ahora registra el tamaño del garrafón canjeado en el inventario
+ *  (campos nuevosPorTamano/usadosPorTamano), además del campo tamano. */
 async function sincronizarCanje(pedido) {
   if (!pedido || pedido.id == null) return;
   const previos = await getByIndex(STORES.inventario, 'pedidoId', pedido.id);
   await Promise.all(previos.map((m) => remove(STORES.inventario, m.id)));
   const qty = Math.max(0, Math.floor(Number(pedido.canjeCantidad) || 0));
   if (pedido.estado === 'Entregado' && qty > 0) {
+    const tam = tamanoPedido(pedido);
+    // Deltas por tamaño: solo el tamaño del pedido se ve afectado.
+    const nuevosPorTamano = { '20L': 0, '19L': 0, '12L': 0, '10L': 0 };
+    const usadosPorTamano = { '20L': 0, '19L': 0, '12L': 0, '10L': 0 };
+    nuevosPorTamano[tam] = -qty;
+    usadosPorTamano[tam] = qty;
     await add(STORES.inventario, {
       fecha: (pedido.entregadoEn || '').slice(0, 10) || pedido.fecha || hoyISO(),
       tipo: 'Canje',
+      tamano: tam,
       cantidad: qty,
+      // Mantenemos los campos legacy (suma total) para compatibilidad con
+      // reportes/exports viejos que los leían directamente.
       nuevos: -qty,
       usados: qty,
-      concepto: 'Canje de garrafón (pedido entregado)',
+      nuevosPorTamano,
+      usadosPorTamano,
+      concepto: `Canje de garrafón ${tam} (pedido entregado)`,
       pedidoId: pedido.id,
       clienteId: pedido.clienteId,
       creadoEn: new Date().toISOString()
@@ -123,7 +145,13 @@ function formularioPedido(pedido = {}) {
     return;
   }
   const f = el('form', { class: 'form' });
-  const precioDef = pedido.precioUnit != null ? pedido.precioUnit : _cfg.precioDomicilio;
+  // v2.3: tamaño del pedido (default 19L) y precio sugerido según tamaño.
+  const tamanoInicial = tamanoPedido(pedido);
+  const preciosPorTamano = _cfg.preciosPorTamano || {};
+  const preciosCanjePorTamano = _cfg.preciosCanjePorTamano || {};
+  const precioDef = pedido.precioUnit != null
+    ? pedido.precioUnit
+    : (preciosPorTamano[tamanoInicial] ?? _cfg.precioDomicilio ?? 0);
   const cobroActual = estadoCobroVal(pedido);
   f.innerHTML = `
     <div class="field">
@@ -143,18 +171,22 @@ function formularioPedido(pedido = {}) {
         <input id="pCantidad" name="cantidad" type="number" min="1" step="1" inputmode="numeric" required value="${esc(pedido.cantidad || 1)}" />
       </div>
     </div>
-    <div class="field">
-      <label>Precio por garrafón</label>
-      <div class="btn-row">
-        <button type="button" class="btn btn--ghost btn--sm" data-precio="${_cfg.precioDomicilio}">🚚 Domicilio (${dinero(_cfg.precioDomicilio)})</button>
-        <button type="button" class="btn btn--ghost btn--sm" data-precio="${_cfg.precioVentanilla}">🏪 Ventanilla (${dinero(_cfg.precioVentanilla)})</button>
+    <div class="field--row">
+      <div class="field">
+        <label for="pTamano">Tamaño de garrafón *</label>
+        <select id="pTamano" name="tamano" required>
+          ${TAMANOS_GARRAFON.map((t) => `<option value="${esc(t)}" ${tamanoInicial === t ? 'selected' : ''}>${esc(t)} (precio sugerido: ${dinero(preciosPorTamano[t] ?? 0)})</option>`).join('')}
+        </select>
       </div>
-      <input id="pPrecio" name="precioUnit" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(precioDef)}" />
+      <div class="field">
+        <label for="pPrecio">Precio por garrafón</label>
+        <input id="pPrecio" name="precioUnit" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(precioDef)}" />
+      </div>
     </div>
     <div class="field">
       <label for="pCanje">Garrafones en canje (cambio por uno nuevo)</label>
       <input id="pCanje" name="canjeCantidad" type="number" min="0" step="1" inputmode="numeric" value="${esc(pedido.canjeCantidad || 0)}" />
-      <p class="hint" style="margin:4px 0 0">Cada canje suma ${dinero(_cfg.precioCanje)} al total y, al entregar, descuenta 1 garrafón nuevo del inventario.</p>
+      <p class="hint" style="margin:4px 0 0">Cada canje suma <span id="pHintCanje">${dinero(preciosCanjePorTamano[tamanoInicial] ?? 0)}</span> al total y, al entregar, descuenta 1 garrafón nuevo del inventario.</p>
     </div>
     <div class="field--row">
       <div class="field">
@@ -186,14 +218,35 @@ function formularioPedido(pedido = {}) {
     </div>
   `;
 
+  const selTamano = f.querySelector('#pTamano');
   const inputPrecio = f.querySelector('#pPrecio');
   const inputCant = f.querySelector('#pCantidad');
   const inputCanje = f.querySelector('#pCanje');
-  const recalc = () => calcularTotal(f, _cfg.precioCanje);
+  const hintCanje = f.querySelector('#pHintCanje');
 
-  f.querySelectorAll('[data-precio]').forEach((b) =>
-    b.addEventListener('click', () => { inputPrecio.value = b.dataset.precio; recalc(); }));
-  inputPrecio.addEventListener('input', recalc);
+  // Al cambiar el tamaño: si el precio actual coincide con el precio sugerido
+  // del tamaño anterior, lo actualizamos al nuevo sugerido. Si el usuario lo
+  // había editado manualmente, lo respetamos (no lo pisamos).
+  let precioEditadoManualmente = false;
+  selTamano.addEventListener('change', () => {
+    const nuevoTam = selTamano.value;
+    const sugerido = preciosPorTamano[nuevoTam] ?? 0;
+    const canjeSugerido = preciosCanjePorTamano[nuevoTam] ?? 0;
+    if (!precioEditadoManualmente) {
+      inputPrecio.value = sugerido;
+    }
+    if (hintCanje) hintCanje.textContent = dinero(canjeSugerido);
+    recalc();
+  });
+  inputPrecio.addEventListener('input', () => {
+    // Detecta si el usuario escribe un precio distinto al sugerido del tamaño actual.
+    const sugerido = preciosPorTamano[selTamano.value] ?? 0;
+    precioEditadoManualmente = Number(inputPrecio.value) !== Number(sugerido);
+    recalc();
+  });
+
+  const recalc = () => calcularTotal(f, preciosCanjePorTamano[selTamano.value] ?? 0);
+
   inputCant.addEventListener('input', recalc);
   inputCanje.addEventListener('input', recalc);
   f.querySelector('#btnCancelar').addEventListener('click', cerrarModal);
@@ -214,12 +267,14 @@ function formularioPedido(pedido = {}) {
     else if (cobro === 'credito') { estado = 'Entregado'; pagado = false; }
 
     const canjeCantidad = Math.max(0, Math.floor(Number(fd.canjeCantidad) || 0));
-    const precioCanje = Number(_cfg.precioCanje) || 0;
+    const tamano = fd.tamano || TAMANO_DEFAULT;
+    const precioCanje = Number(preciosCanjePorTamano[tamano]) || 0;
 
     const registro = {
       ...pedido,
       clienteId: Number(fd.clienteId),
       fecha: fd.fecha,
+      tamano,
       cantidad,
       precioUnit,
       canjeCantidad,
@@ -254,17 +309,20 @@ function formularioPedido(pedido = {}) {
 
 function aplicarFiltros() {
   const estado = $('#filtroEstado')?.value || '';
+  const tam = $('#filtroTamano')?.value || '';
   const q = ($('#buscarPedido')?.value || '').toLowerCase().trim();
   const cont = $('#listaPedidos');
   if (!cont) return;
 
   let lista = _pedidos.slice();
   if (estado) lista = lista.filter((p) => p.estado === estado);
+  if (tam) lista = lista.filter((p) => tamanoPedido(p) === tam);
   if (q) lista = lista.filter((p) => {
     const cli = _mapa.get(p.clienteId);
     return (cli?.nombre || '').toLowerCase().includes(q)
       || (cli ? folioCliente(cli) : '').includes(q)
-      || (p.observaciones || '').toLowerCase().includes(q);
+      || (p.observaciones || '').toLowerCase().includes(q)
+      || tamanoPedido(p).toLowerCase().includes(q);
   });
   lista.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '') || (b.id - a.id));
 
@@ -296,10 +354,15 @@ export async function render(root, params = []) {
   ]));
 
   const toolbar = el('div', { class: 'toolbar' }, [
-    el('input', { id: 'buscarPedido', class: 'search', type: 'search', placeholder: '🔍 Buscar por cliente, N.º u observación', oninput: debounce(aplicarFiltros, 200) }),
+    el('input', { id: 'buscarPedido', class: 'search', type: 'search', placeholder: '🔍 Buscar por cliente, N.º, tamaño u observación', oninput: debounce(aplicarFiltros, 200) }),
     (() => {
       const s = el('select', { id: 'filtroEstado', onchange: aplicarFiltros });
-      s.innerHTML = '<option value="">Todos</option>' + ESTADOS_PEDIDO.map((x) => `<option>${x}</option>`).join('');
+      s.innerHTML = '<option value="">Todos los estados</option>' + ESTADOS_PEDIDO.map((x) => `<option>${x}</option>`).join('');
+      return s;
+    })(),
+    (() => {
+      const s = el('select', { id: 'filtroTamano', onchange: aplicarFiltros });
+      s.innerHTML = '<option value="">Todos los tamaños</option>' + TAMANOS_GARRAFON.map((t) => `<option value="${t}">${t}</option>`).join('');
       return s;
     })()
   ]);

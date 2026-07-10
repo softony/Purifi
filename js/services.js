@@ -15,7 +15,7 @@
  * Ingresos (ventas): se cuentan cuando el pedido se ENTREGA (no al crearlo).
  */
 import { STORES, getAll, getByIndex } from './db.js';
-import { hoyISO, inicioSemanaISO, inicioMesISO, diasEntre, sumarDiasISO, FRECUENCIA_DIAS, tipoGasto } from './utils.js';
+import { hoyISO, inicioSemanaISO, inicioMesISO, diasEntre, sumarDiasISO, FRECUENCIA_DIAS, tipoGasto, TAMANOS_GARRAFON, TAMANO_DEFAULT, tamanoPedido } from './utils.js';
 
 export const CREDITO = 'Crédito (adeudo)';
 
@@ -96,10 +96,11 @@ export async function resumenDashboard() {
   // Las ventas (ingresos) y garrafones vendidos cuentan solo lo ya ENTREGADO.
   const entregadosHoy = pedidosHoy.filter(esVentaPedido);
   const entregadosSemana = pedidosSemana.filter(esVentaPedido);
+  const entregadosTotal = pedidos.filter(esVentaPedido);
 
   const ventasDia = entregadosHoy.reduce((s, p) => s + (Number(p.total) || 0), 0);
   const ventasSemana = entregadosSemana.reduce((s, p) => s + (Number(p.total) || 0), 0);
-  const garrafonesTotal = pedidos.filter(esVentaPedido).reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  const garrafonesTotal = entregadosTotal.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
   const garrafonesHoy = entregadosHoy.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
 
   let adeudoTotal = 0; let clientesConAdeudo = 0;
@@ -113,11 +114,17 @@ export async function resumenDashboard() {
   const ticketPromedio = pedidosEntregadosSemana ? ventasSemana / pedidosEntregadosSemana : 0;
   const pctConAdeudo = clientes.length ? (clientesConAdeudo / clientes.length) * 100 : 0;
 
+  // v2.3: desglose por tamaño (total, hoy y semana)
+  const garrafonesPorTamanoTotal = garrafonesPorTamano(entregadosTotal);
+  const garrafonesPorTamanoHoy = garrafonesPorTamano(entregadosHoy);
+  const garrafonesPorTamanoSemana = garrafonesPorTamano(entregadosSemana);
+
   return {
     ventasDia, ventasSemana,
     clientesActivos: clientes.length,
     adeudoTotal, clientesConAdeudo,
     garrafonesTotal, garrafonesHoy, garrafonesSemana,
+    garrafonesPorTamanoTotal, garrafonesPorTamanoHoy, garrafonesPorTamanoSemana,
     pedidosHoy: pedidosHoy.length,
     pedidosEntregadosSemana,
     ticketPromedio,
@@ -271,12 +278,69 @@ export async function inteligenciaPorGarrafon(dias = 30) {
   };
 }
 
-/** Existencias de garrafones (nuevos / usados) calculadas desde los movimientos. */
+/** Existencias de garrafones (nuevos / usados) calculadas desde los movimientos.
+ *  v2.3: devuelve también el desglose por tamaño en `porTamano`.
+ *  Cada movimiento puede tener los campos nuevos `nuevosPorTamano`/`usadosPorTamano`
+ *  (objetos por tamaño) o los viejos `nuevos`/`usados` (escalares que asumimos
+ *  pertenecen al `tamano` del movimiento o a 19L si no tiene). */
 export async function stockGarrafones() {
   const movs = await getAll(STORES.inventario);
-  let nuevos = 0, usados = 0;
-  movs.forEach((m) => { nuevos += Number(m.nuevos) || 0; usados += Number(m.usados) || 0; });
-  return { nuevos: Math.round(nuevos), usados: Math.round(usados), total: Math.round(nuevos + usados) };
+  const porTamano = {};
+  TAMANOS_GARRAFON.forEach((t) => { porTamano[t] = { nuevos: 0, usados: 0 }; });
+  let nuevosTotal = 0, usadosTotal = 0;
+  movs.forEach((m) => {
+    const tam = m.tamano || TAMANO_DEFAULT;
+    if (m.nuevosPorTamano && typeof m.nuevosPorTamano === 'object') {
+      TAMANOS_GARRAFON.forEach((t) => {
+        const v = Number(m.nuevosPorTamano[t]) || 0;
+        porTamano[t].nuevos += v;
+        nuevosTotal += v;
+      });
+    } else {
+      const v = Number(m.nuevos) || 0;
+      if (porTamano[tam]) porTamano[tam].nuevos += v;
+      nuevosTotal += v;
+    }
+    if (m.usadosPorTamano && typeof m.usadosPorTamano === 'object') {
+      TAMANOS_GARRAFON.forEach((t) => {
+        const v = Number(m.usadosPorTamano[t]) || 0;
+        porTamano[t].usados += v;
+        usadosTotal += v;
+      });
+    } else {
+      const v = Number(m.usados) || 0;
+      if (porTamano[tam]) porTamano[tam].usados += v;
+      usadosTotal += v;
+    }
+  });
+  // Redondea todo
+  TAMANOS_GARRAFON.forEach((t) => {
+    porTamano[t].nuevos = Math.round(porTamano[t].nuevos);
+    porTamano[t].usados = Math.round(porTamano[t].usados);
+  });
+  return {
+    nuevos: Math.round(nuevosTotal),
+    usados: Math.round(usadosTotal),
+    total: Math.round(nuevosTotal + usadosTotal),
+    porTamano
+  };
+}
+
+/** Cuenta garrafones de una lista de pedidos, agrupados por tamaño.
+ *  Devuelve { '20L': n, '19L': n, '12L': n, '10L': n, _total: n }. */
+export function garrafonesPorTamano(pedidos) {
+  const out = {};
+  TAMANOS_GARRAFON.forEach((t) => { out[t] = 0; });
+  let total = 0;
+  (pedidos || []).forEach((p) => {
+    const tam = tamanoPedido(p);
+    const c = Number(p.cantidad) || 0;
+    if (out[tam] != null) out[tam] += c;
+    else out[tam] = c;
+    total += c;
+  });
+  out._total = total;
+  return out;
 }
 
 /** Ventas agregadas por día dentro de un rango. */
