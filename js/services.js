@@ -17,6 +17,80 @@
 import { STORES, getAll, getByIndex } from './db.js';
 import { hoyISO, inicioSemanaISO, inicioMesISO, diasEntre, sumarDiasISO, FRECUENCIA_DIAS, tipoGasto, TAMANOS_GARRAFON, TAMANO_DEFAULT, tamanoPedido } from './utils.js';
 
+/**
+ * Ruta sugerida para una fecha dada (v2.4).
+ *
+ * Para cada cliente con al menos una entrega previa, calcula:
+ *  - interval: días esperados entre entregas (según su frecuencia)
+ *  - dias: días transcurridos desde su última entrega hasta `fecha`
+ *  - vencidoPor: dias - interval (>0 = ya se pasó, 0 = toca justo hoy, <0 = aún no toca)
+ *
+ * Devuelve solo los clientes que toca visitar en `fecha` (dias >= interval),
+ * agrupados por zona (colonia), ordenados por más vencidos primero dentro de
+ * cada zona.
+ *
+ * @param {string} fechaISO - YYYY-MM-DD. Default: hoy.
+ * @returns {Promise<{fecha, paradas, porZona, total, vencidos, alDia}>}
+ *   - paradas: [{ cliente, colonia, frecuencia, ultima, dias, interval, vencidoPor }]
+ *   - porZona: [[zona, [paradas]]] (ordenado alfabéticamente por zona)
+ *   - total: cantidad de paradas
+ *   - vencidos: cuántos tienen vencidoPor > 0
+ */
+export async function rutaSugerida(fechaISO = hoyISO()) {
+  const [clientes, pedidos] = await Promise.all([
+    getAll(STORES.clientes), getAll(STORES.pedidos)
+  ]);
+
+  // Última fecha de entrega por cliente
+  const ultima = new Map();
+  pedidos.forEach((p) => {
+    if (p.estado !== 'Entregado') return;
+    const f = (p.entregadoEn || '').slice(0, 10) || p.fecha;
+    if (!f) return;
+    const prev = ultima.get(p.clienteId);
+    if (!prev || f > prev) ultima.set(p.clienteId, f);
+  });
+
+  const paradas = [];
+  clientes.forEach((c) => {
+    const ult = ultima.get(c.id);
+    if (!ult) return; // excluir sin compras registradas
+    const interval = FRECUENCIA_DIAS[c.frecuencia] || 7;
+    const dias = diasEntre(ult, fechaISO);
+    if (dias < interval) return; // aún no toca
+    const vencidoPor = dias - interval;
+    paradas.push({
+      cliente: c,
+      colonia: (c.colonia || 'Sin colonia').trim() || 'Sin colonia',
+      frecuencia: c.frecuencia || 'Semanal',
+      ultima: ult,
+      dias,
+      interval,
+      vencidoPor
+    });
+  });
+
+  // Ordena por más vencidos primero
+  paradas.sort((a, b) => b.vencidoPor - a.vencidoPor);
+
+  // Agrupa por zona
+  const porZonaMap = new Map();
+  paradas.forEach((p) => {
+    if (!porZonaMap.has(p.colonia)) porZonaMap.set(p.colonia, []);
+    porZonaMap.get(p.colonia).push(p);
+  });
+  const porZona = Array.from(porZonaMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0], 'es'));
+
+  return {
+    fecha: fechaISO,
+    paradas,
+    porZona,
+    total: paradas.length,
+    vencidos: paradas.filter((p) => p.vencidoPor > 0).length
+  };
+}
+
 export const CREDITO = 'Crédito (adeudo)';
 
 /** ¿El pedido genera adeudo? Entregado pero no cobrado. */

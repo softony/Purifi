@@ -223,7 +223,7 @@ export async function render(root) {
   /* --- Acerca de --- */
   root.appendChild(el('div', { class: 'card' }, [
     el('h3', { text: 'ℹ️ Acerca de' }),
-    el('p', { class: 'muted', text: 'AquaGestión v2.3 — PWA para purificadoras. Funciona sin conexión e instalable en el celular.' }),
+    el('p', { class: 'muted', text: 'AquaGestión v2.4 — PWA para purificadoras. Funciona sin conexión e instalable en el celular.' }),
     el('p', { class: 'hint', text: 'Arquitectura preparada para futuras funciones de geolocalización y optimización de rutas.' })
   ]));
 }

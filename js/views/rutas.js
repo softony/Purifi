@@ -1,18 +1,145 @@
 /**
  * rutas.js — Agrupación de clientes por zona y gestión de rutas diarias.
+ *
+ * v2.4: nueva sección "🤖 Ruta sugerida para hoy" que calcula automáticamente
+ * a qué clientes toca visitar en una fecha dada, según su frecuencia de
+ * compra y su última entrega. El usuario puede convertir esa sugerencia en
+ * una ruta manual editable con un solo botón.
+ *
  * Preparado para futura geolocalización: cada parada puede guardar {lat,lng}
  * y el orden puede optimizarse sin cambiar el esquema.
  */
 import { STORES, getAll, add, put, remove } from '../db.js';
 import {
   el, $, $$, toast, abrirModal, cerrarModal, confirmar, esc,
-  hoyISO, fechaLegible, folioCliente
+  hoyISO, fechaLegible, folioCliente, sumarDiasISO, FRECUENCIAS
 } from '../utils.js';
-import { clientesPorColonia } from '../services.js';
+import { clientesPorColonia, rutaSugerida } from '../services.js';
 
 let _clientes = [];
 let _rutas = [];
 let _mapaCliente = new Map();
+let _sugerencia = null;       // resultado de rutaSugerida() para la fecha seleccionada
+let _fechaSugerida = hoyISO(); // fecha activa en el panel de sugerencia
+
+/* ===========================================================
+   RUTA SUGERIDA (AUTOMÁTICA)
+   =========================================================== */
+
+/** Carga la sugerencia para la fecha activa y la pinta. */
+async function cargarSugerencia() {
+  const cont = $('#sugerenciaCont');
+  if (!cont) return;
+  cont.innerHTML = '<div class="loading"><span class="spinner"></span> Calculando…</div>';
+  try {
+    _sugerencia = await rutaSugerida(_fechaSugerida);
+    pintarSugerencia(cont);
+  } catch (e) {
+    cont.innerHTML = `<div class="empty-state"><p>Error al calcular: ${esc(e.message)}</p></div>`;
+  }
+}
+
+function badgeVencimiento(p) {
+  if (p.vencidoPor === 0) {
+    return el('span', { class: 'badge badge--info', text: '🔔 Toca hoy' });
+  }
+  // Vencido por N días → tono rojo según severidad
+  const v = p.vencidoPor;
+  let clase = 'badge--adeudo';
+  if (v >= 14) clase = 'badge--adeudo';
+  else if (v >= 7) clase = 'badge--adeudo';
+  return el('span', { class: `badge ${clase}`, text: `⚠️ Vencido ${v}d` });
+}
+
+function tarjetaSugerencia(p) {
+  const c = p.cliente;
+  const folio = folioCliente(c);
+  const dir = [c.calle, c.colonia].filter(Boolean).join(', ');
+  const arr = [
+    el('button', { class: 'btn btn--primary btn--sm', text: '➕ Pedido', onclick: () => window.navegar(`pedidos/nuevo/${c.id}`) })
+  ];
+  if (c.telefono) {
+    const tel = String(c.telefono).replace(/[^0-9+]/g, '');
+    arr.push(el('a', { class: 'btn btn--ghost btn--sm', href: `tel:${tel}`, text: '📞' }));
+  }
+  return el('div', { class: 'item', style: 'flex-wrap:wrap' }, [
+    el('div', { class: 'cliente-num', title: `Número de cliente ${folio}` }, [
+      el('small', { text: 'N.º' }),
+      el('b', { text: folio })
+    ]),
+    el('div', { class: 'item__main' }, [
+      el('div', { class: 'item__title', text: c.nombre }),
+      el('div', { class: 'item__meta', html: `${esc(dir || 'Sin dirección')}${c.referencia ? ' · ' + esc(c.referencia) : ''}` }),
+      el('div', { class: 'tag-line mt', style: 'flex-wrap:wrap' }, [
+        el('span', { class: 'badge badge--info', text: '🔄 ' + (p.frecuencia || 'Semanal') }),
+        badgeVencimiento(p),
+        el('span', { class: 'badge badge--info', text: `Última: ${fechaLegible(p.ultima)}` })
+      ]),
+      el('div', { class: 'btn-row', style: 'margin-top:6px' }, arr)
+    ])
+  ]);
+}
+
+function pintarSugerencia(cont) {
+  cont.innerHTML = '';
+  const s = _sugerencia;
+  if (!s || !s.total) {
+    cont.appendChild(el('div', { class: 'empty-state' }, [
+      el('span', { class: 'emoji', text: '🎉' }),
+      el('p', { text: '¡Nadie por visitar en esta fecha! Todos los clientes están al día.' })
+    ]));
+    return;
+  }
+
+  // Resumen + acciones
+  const resumen = el('div', { class: 'card', style: 'background:var(--naranja-claro)' }, [
+    el('div', { class: 'flex', style: 'justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px' }, [
+      el('div', {}, [
+        el('strong', { html: `${s.total} cliente(s) por visitar` }),
+        el('p', { class: 'muted', style: 'margin:2px 0 0', text: s.vencidos > 0 ? `${s.vencidos} vencido(s) · ${s.total - s.vencidos} justo(s) hoy` : 'Todos tocan justo hoy' })
+      ]),
+      el('div', { class: 'btn-row' }, [
+        el('button', { class: 'btn btn--ghost btn--sm', text: '🔄 Actualizar', onclick: cargarSugerencia }),
+        el('button', { class: 'btn btn--primary btn--lg', text: '➕ Crear ruta con estos clientes', onclick: crearRutaDesdeSugerencia })
+      ])
+    ])
+  ]);
+  cont.appendChild(resumen);
+
+  // Paradas agrupadas por zona
+  s.porZona.forEach(([zona, lista]) => {
+    const card = el('div', { class: 'card' });
+    const head = el('div', { class: 'zona__head' }, [
+      el('span', { text: '📍 ' + zona }),
+      el('span', { class: 'zona__count', text: String(lista.length) })
+    ]);
+    const body = el('div', { class: 'list' });
+    lista.forEach((p) => body.appendChild(tarjetaSugerencia(p)));
+    head.addEventListener('click', () => { body.hidden = !body.hidden; });
+    card.appendChild(head);
+    card.appendChild(body);
+    cont.appendChild(card);
+  });
+}
+
+/** Crea una ruta manual editable con los clientes de la sugerencia actual. */
+function crearRutaDesdeSugerencia() {
+  if (!_sugerencia || !_sugerencia.total) {
+    toast('No hay clientes para crear la ruta', 'warn');
+    return;
+  }
+  // Construye un objeto ruta "fantasma" con las paradas preseleccionadas.
+  const preseleccion = _sugerencia.paradas.map((p) => ({
+    clienteId: p.cliente.id,
+    entregado: false
+  }));
+  // Pasa los IDs al formulario para que los marque por defecto.
+  formularioRuta(null, { fecha: _sugerencia.fecha, paradas: preseleccion, nombre: `Ruta sugerida ${fechaLegible(_sugerencia.fecha)}` });
+}
+
+/* ===========================================================
+   RUTAS MANUALES (igual que antes + soporte preselección)
+   =========================================================== */
 
 /* ---------- Clientes por zona (colonia / calle) ---------- */
 async function pintarZonas(cont) {
@@ -48,10 +175,15 @@ async function pintarZonas(cont) {
   });
 }
 
-/* ---------- Crear / editar ruta diaria ---------- */
-function formularioRuta(ruta = null) {
+/* ---------- Crear / editar ruta diaria ----------
+ * v2.4: si se pasa `preseleccion`, se usa como objeto base (fecha, nombre y
+ * paradas) y los checkboxes se marcan según las paradas. Sirve para crear
+ * una ruta a partir de la sugerencia automática.
+ */
+function formularioRuta(ruta = null, preseleccion = null) {
   const esEdit = !!ruta;
-  const seleccion = new Set((ruta?.paradas || []).map((p) => p.clienteId));
+  const base = ruta || preseleccion || {};
+  const seleccion = new Set((base.paradas || []).map((p) => p.clienteId));
   const f = el('form', { class: 'form' });
 
   const grupos = agruparClientes(_clientes);
@@ -74,11 +206,11 @@ function formularioRuta(ruta = null) {
     <div class="field--row">
       <div class="field">
         <label for="rFecha">Fecha de la ruta *</label>
-        <input id="rFecha" name="fecha" type="date" required value="${esc(ruta?.fecha || hoyISO())}" />
+        <input id="rFecha" name="fecha" type="date" required value="${esc(base.fecha || hoyISO())}" />
       </div>
       <div class="field">
         <label for="rNombre">Nombre (opcional)</label>
-        <input id="rNombre" name="nombre" placeholder="Ej. Ruta mañana" value="${esc(ruta?.nombre || '')}" />
+        <input id="rNombre" name="nombre" placeholder="Ej. Ruta mañana" value="${esc(base.nombre || '')}" />
       </div>
     </div>
     <p class="hint">Selecciona los clientes a visitar. Toca el título de una zona para plegarla.</p>
@@ -99,7 +231,7 @@ function formularioRuta(ruta = null) {
     const ids = $$('#rSeleccion input[type=checkbox]:checked', f).map((c) => Number(c.value));
     if (!ids.length) { toast('Selecciona al menos un cliente', 'error'); return; }
 
-    const prev = new Map((ruta?.paradas || []).map((p) => [p.clienteId, p]));
+    const prev = new Map((base.paradas || []).map((p) => [p.clienteId, p]));
     const paradas = ids.map((id) => prev.get(id) || { clienteId: id, entregado: false });
 
     const registro = { ...(ruta || {}), fecha: fd.fecha, nombre: (fd.nombre || '').trim(), paradas };
@@ -185,6 +317,8 @@ async function recargar() {
   pintarRutas();
   const zc = $('#zonasCont');
   if (zc) pintarZonas(zc);
+  // Recarga también la sugerencia (porque pudo cambiar al marcar entregas)
+  await cargarSugerencia();
 }
 
 function pintarRutas() {
@@ -195,7 +329,7 @@ function pintarRutas() {
   if (!lista.length) {
     cont.appendChild(el('div', { class: 'empty-state' }, [
       el('span', { class: 'emoji', text: '🚚' }),
-      el('p', { text: 'No hay rutas creadas. Crea tu primera ruta diaria.' })
+      el('p', { text: 'No hay rutas creadas. Usa la sugerencia de arriba o crea una manualmente.' })
     ]));
     return;
   }
@@ -208,11 +342,38 @@ export async function render(root) {
 
   root.innerHTML = '';
   root.appendChild(el('div', { class: 'page-head' }, [
-    el('h2', { text: 'Rutas' }),
-    el('button', { class: 'btn btn--primary', text: '➕ Nueva ruta', onclick: () => formularioRuta() })
+    el('div', {}, [
+      el('h2', { text: 'Rutas' }),
+      el('p', { class: 'page-sub', text: 'La ruta de cada día se calcula sola según la frecuencia de cada cliente y su última entrega.' })
+    ]),
+    el('button', { class: 'btn btn--ghost', text: '➕ Ruta manual', onclick: () => formularioRuta() })
   ]));
 
-  root.appendChild(el('h3', { text: '🚚 Rutas diarias' }));
+  /* --- Ruta sugerida (automática) --- */
+  const sugCard = el('div', { class: 'card' }, [
+    el('h3', { html: '🤖 Ruta sugerida' }),
+    el('p', { class: 'hint', style: 'margin:0 0 10px', text: 'Calculada automáticamente: muestra a quién toca visitar (y quién ya se venció). Puedes convertirla en una ruta editable para ajustarla antes de salir.' })
+  ]);
+  const toolbar = el('div', { class: 'toolbar' }, [
+    el('label', { class: 'flex', style: 'gap:6px;align-items:center' }, [
+      el('span', { text: '📅 Fecha:' }),
+      (() => {
+        const i = el('input', { type: 'date', value: _fechaSugerida, onchange: (e) => { _fechaSugerida = e.target.value; cargarSugerencia(); } });
+        return i;
+      })()
+    ]),
+    el('div', { class: 'grow' }),
+    el('button', { class: 'btn btn--ghost btn--sm', text: '⏪ Hoy', onclick: () => { _fechaSugerida = hoyISO(); const i = toolbar.querySelector('input[type=date]'); if (i) i.value = _fechaSugerida; cargarSugerencia(); } }),
+    el('button', { class: 'btn btn--ghost btn--sm', text: '➡️ Mañana', onclick: () => { _fechaSugerida = sumarDiasISO(hoyISO(), 1); const i = toolbar.querySelector('input[type=date]'); if (i) i.value = _fechaSugerida; cargarSugerencia(); } })
+  ]);
+  sugCard.appendChild(toolbar);
+  sugCard.appendChild(el('div', { id: 'sugerenciaCont' }));
+  root.appendChild(sugCard);
+
+  root.appendChild(el('hr', { class: 'divider' }));
+
+  /* --- Rutas manuales --- */
+  root.appendChild(el('h3', { text: '🚚 Rutas guardadas' }));
   root.appendChild(el('div', { id: 'rutasCont' }));
 
   root.appendChild(el('hr', { class: 'divider' }));
@@ -221,8 +382,9 @@ export async function render(root) {
   const zonasCont = el('div', { id: 'zonasCont' });
   root.appendChild(zonasCont);
 
-  root.appendChild(el('button', { class: 'fab', title: 'Nueva ruta', text: '＋', onclick: () => formularioRuta() }));
+  root.appendChild(el('button', { class: 'fab', title: 'Nueva ruta manual', text: '＋', onclick: () => formularioRuta() }));
 
   pintarRutas();
   await pintarZonas(zonasCont);
+  await cargarSugerencia();
 }
