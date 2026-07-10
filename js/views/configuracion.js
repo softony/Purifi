@@ -72,10 +72,10 @@ async function guardarConfig(form) {
     moneda: fd.moneda || 'MXN',
     preciosPorTamano,
     preciosCanjePorTamano,
-    // Legacy:
-    precioDomicilio: preciosPorTamano['19L'] || 0,
-    precioVentanilla: preciosPorTamano['19L'] || 0,
-    precioCanje: preciosCanjePorTamano['19L'] || 0,
+    // Legacy (v2.5: el default es 20L, así que los legacy se toman de ahí):
+    precioDomicilio: preciosPorTamano['20L'] || 0,
+    precioVentanilla: preciosPorTamano['20L'] || 0,
+    precioCanje: preciosCanjePorTamano['20L'] || 0,
     respaldoAuto: !!form.querySelector('#respaldoAuto').checked
   };
   await setConfigBulk(cfg);
@@ -223,7 +223,7 @@ export async function render(root) {
   /* --- Acerca de --- */
   root.appendChild(el('div', { class: 'card' }, [
     el('h3', { text: 'ℹ️ Acerca de' }),
-    el('p', { class: 'muted', text: 'AquaGestión v2.4 — PWA para purificadoras. Funciona sin conexión e instalable en el celular.' }),
+    el('p', { class: 'muted', text: 'AquaGestión v2.5 — PWA para purificadoras. Funciona sin conexión e instalable en el celular.' }),
     el('p', { class: 'hint', text: 'Arquitectura preparada para futuras funciones de geolocalización y optimización de rutas.' })
   ]));
 }

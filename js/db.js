@@ -24,7 +24,7 @@
  */
 
 const DB_NAME = 'aquagestion';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 /* ---------- EventBus interno: emite 'db:changed' en cada escritura ---------- */
 let _changeDebounce = null;
@@ -170,6 +170,73 @@ function openDB() {
           console.warn('Migración v5 (tamaños) falló parcialmente:', migErr);
         }
       }
+
+      // v6: MIGRACIÓN — cambiar default de tamaño de 19L a 20L.
+      // A petición de David: el garrafón de 20L es el más común en su purificadora.
+      // Como TODOS los pedidos viejos (sin tamaño original) fueron migrados a 19L
+      // en v5, y ahora el default cambia a 20L, reasignamos los pedidos con
+      // tamano='19L' a '20L'. Esto puede afectar algunos pedidos legítimamente
+      // capturados como 19L después de v2.3, pero David puede corregirlos a mano.
+      // También mueve los deltas de inventario y los precios configurados.
+      if (txUpgrade && e.oldVersion < 6) {
+        try {
+          // 1) Pedidos: tamano='19L' → '20L'
+          const pedStore = txUpgrade.objectStore(STORES.pedidos);
+          pedStore.openCursor().onsuccess = (ev) => {
+            const cursor = ev.target.result;
+            if (!cursor) return;
+            const v = cursor.value;
+            if (v.tamano === '19L') {
+              v.tamano = '20L';
+              cursor.update(v);
+            }
+            cursor.continue();
+          };
+
+          // 2) Inventario: tamano='19L' → '20L' y mover deltas de la clave '19L' a '20L'
+          const invStore = txUpgrade.objectStore(STORES.inventario);
+          invStore.openCursor().onsuccess = (ev) => {
+            const cursor = ev.target.result;
+            if (!cursor) return;
+            const v = cursor.value;
+            let changed = false;
+            // Mover deltas de la clave '19L' a '20L' (sumando a lo que ya tuviera)
+            if (v.nuevosPorTamano && typeof v.nuevosPorTamano === 'object') {
+              const delta19 = Number(v.nuevosPorTamano['19L']) || 0;
+              const delta20 = Number(v.nuevosPorTamano['20L']) || 0;
+              if (delta19 !== 0) {
+                v.nuevosPorTamano['20L'] = delta20 + delta19;
+                v.nuevosPorTamano['19L'] = 0;
+                changed = true;
+              }
+            }
+            if (v.usadosPorTamano && typeof v.usadosPorTamano === 'object') {
+              const delta19 = Number(v.usadosPorTamano['19L']) || 0;
+              const delta20 = Number(v.usadosPorTamano['20L']) || 0;
+              if (delta19 !== 0) {
+                v.usadosPorTamano['20L'] = delta20 + delta19;
+                v.usadosPorTamano['19L'] = 0;
+                changed = true;
+              }
+            }
+            // Cambiar el campo tamano del movimiento
+            if (v.tamano === '19L') {
+              v.tamano = '20L';
+              changed = true;
+            }
+            if (changed) cursor.update(v);
+            cursor.continue();
+          };
+
+          // 3) Configuración: NO se migran los precios automáticamente.
+          //    Si David editó el precio de 19L manualmente (ej. $22 porque en su
+          //    zona cuesta eso), no queremos mover ese valor a 20L sin su consentimiento.
+          //    Los defaults ya son coherentes (20L=$25, 19L=$20) y David puede
+          //    ajustarlos en Configuración si lo necesita.
+        } catch (migErr) {
+          console.warn('Migración v6 (default 20L) falló parcialmente:', migErr);
+        }
+      }
     };
 
     req.onsuccess = () => { _db = req.result; resolve(_db); };
@@ -305,15 +372,16 @@ export async function getConfig() {
   const cfg = { ...DEFAULT_CONFIG };
   rows.forEach((r) => { cfg[r.clave] = r.valor; });
   // Migración suave: si un backup viejo no trae los mapas de precios por tamaño,
-  // los reconstruimos a partir de los precios legacy (todos → 19L) o de los defaults.
+  // los reconstruimos a partir de los precios legacy o de los defaults.
+  // v2.5: el default ahora es 20L (no 19L), así que los precios legacy van a 20L.
   if (!cfg.preciosPorTamano || typeof cfg.preciosPorTamano !== 'object') {
     cfg.preciosPorTamano = { ...DEFAULT_CONFIG.preciosPorTamano };
-    // Si había un precioDomicilio legacy, asumimos que era para 19L
-    if (Number(cfg.precioDomicilio) > 0) cfg.preciosPorTamano['19L'] = Number(cfg.precioDomicilio);
+    // Si había un precioDomicilio legacy, asumimos que era para 20L (default actual)
+    if (Number(cfg.precioDomicilio) > 0) cfg.preciosPorTamano['20L'] = Number(cfg.precioDomicilio);
   }
   if (!cfg.preciosCanjePorTamano || typeof cfg.preciosCanjePorTamano !== 'object') {
     cfg.preciosCanjePorTamano = { ...DEFAULT_CONFIG.preciosCanjePorTamano };
-    if (Number(cfg.precioCanje) > 0) cfg.preciosCanjePorTamano['19L'] = Number(cfg.precioCanje);
+    if (Number(cfg.precioCanje) > 0) cfg.preciosCanjePorTamano['20L'] = Number(cfg.precioCanje);
   }
   return cfg;
 }

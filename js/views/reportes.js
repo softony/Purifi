@@ -4,7 +4,7 @@
 import { STORES, getAll } from '../db.js';
 import {
   el, $, dinero, numero, hoyISO, fechaLegible, inicioSemanaISO, inicioMesISO,
-  nombreMes, toast, folioCliente, TAMANOS_GARRAFON, tamanoPedido
+  nombreMes, toast, folioCliente, esc, TAMANOS_GARRAFON, tamanoPedido
 } from '../utils.js';
 import {
   ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes,

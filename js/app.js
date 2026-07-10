@@ -219,9 +219,10 @@ function configuracionInicial(cfg) {
       preciosPorTamano,
       preciosCanjePorTamano,
       // Legacy (para que los backups viejos sigan siendo coherentes):
-      precioDomicilio: preciosPorTamano['19L'] || 0,
-      precioVentanilla: preciosPorTamano['19L'] || 0,
-      precioCanje: preciosCanjePorTamano['19L'] || 0,
+      // v2.5: el default ahora es 20L, así que los legacy se toman de ahí.
+      precioDomicilio: preciosPorTamano['20L'] || 0,
+      precioVentanilla: preciosPorTamano['20L'] || 0,
+      precioCanje: preciosCanjePorTamano['20L'] || 0,
       configurado: true
     });
     setMoneda(moneda);

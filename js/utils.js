@@ -271,8 +271,9 @@ export const FRECUENCIA_DIAS = {
  */
 export const TAMANOS_GARRAFON = ['20L', '19L', '12L', '10L'];
 
-/** Tamaño por defecto (también se asigna a los pedidos históricos sin tamaño). */
-export const TAMANO_DEFAULT = '19L';
+/** Tamaño por defecto (también se asigna a los pedidos históricos sin tamaño).
+ *  v2.5: cambiado a '20L' a petición de David (es el más común en su purificadora). */
+export const TAMANO_DEFAULT = '20L';
 
 /** Precios sugeridos por tamaño (editable en Configuración y por pedido). */
 export const PRECIOS_DEFAULT_POR_TAMANO = {
