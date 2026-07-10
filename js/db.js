@@ -120,13 +120,15 @@ function openDB() {
 }
 
 /**
- * Devuelve { store, tx } para operaciones que necesitan acceder a la
- * transacción completa (esperar oncomplete). En lecturas, tx puede ignorarse.
+ * Devuelve { store, transaction } para operaciones que necesitan acceder a la
+ * transacción completa (esperar oncomplete). En lecturas, transaction puede
+ * ignorarse. El nombre de la función es openTx (no tx) para evitar colisión
+ * con la variable local `transaction` en quien la invoca.
  */
-function tx(storeName, mode = 'readonly') {
+function openTx(storeName, mode = 'readonly') {
   return openDB().then((db) => {
     const t = db.transaction(storeName, mode);
-    return { store: t.objectStore(storeName), tx: t };
+    return { store: t.objectStore(storeName), transaction: t };
   });
 }
 
@@ -163,51 +165,51 @@ function reqWithTx(request, transaction) {
 /* ---------- API genérico CRUD ---------- */
 
 export async function getAll(storeName) {
-  const { store } = await tx(storeName);
+  const { store } = await openTx(storeName);
   return reqToPromise(store.getAll());
 }
 
 export async function get(storeName, id) {
-  const { store } = await tx(storeName);
+  const { store } = await openTx(storeName);
   return reqToPromise(store.get(id));
 }
 
 export async function add(storeName, value) {
-  const { store, tx } = await tx(storeName, 'readwrite');
-  const id = await reqWithTx(store.add(value), tx);
+  const { store, transaction } = await openTx(storeName, 'readwrite');
+  const id = await reqWithTx(store.add(value), transaction);
   notificarCambio();
   return id;
 }
 
 export async function put(storeName, value) {
-  const { store, tx } = await tx(storeName, 'readwrite');
-  const r = await reqWithTx(store.put(value), tx);
+  const { store, transaction } = await openTx(storeName, 'readwrite');
+  const r = await reqWithTx(store.put(value), transaction);
   notificarCambio();
   return r;
 }
 
 export async function remove(storeName, id) {
-  const { store, tx } = await tx(storeName, 'readwrite');
-  const r = await reqWithTx(store.delete(id), tx);
+  const { store, transaction } = await openTx(storeName, 'readwrite');
+  const r = await reqWithTx(store.delete(id), transaction);
   notificarCambio();
   return r;
 }
 
 export async function clear(storeName) {
-  const { store, tx } = await tx(storeName, 'readwrite');
-  const r = await reqWithTx(store.clear(), tx);
+  const { store, transaction } = await openTx(storeName, 'readwrite');
+  const r = await reqWithTx(store.clear(), transaction);
   notificarCambio();
   return r;
 }
 
 export async function getByIndex(storeName, indexName, value) {
-  const { store } = await tx(storeName);
+  const { store } = await openTx(storeName);
   const idx = store.index(indexName);
   return reqToPromise(idx.getAll(value));
 }
 
 export async function count(storeName) {
-  const { store } = await tx(storeName);
+  const { store } = await openTx(storeName);
   return reqToPromise(store.count());
 }
 
