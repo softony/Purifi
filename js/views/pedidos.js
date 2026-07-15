@@ -1,16 +1,23 @@
 /**
  * pedidos.js — Registro y seguimiento de pedidos de garrafones.
  *
- * v2.3: cada pedido lleva un `tamano` (20L, 19L, 12L, 10L). El precio
- * sugerido al crear/editar se toma de `cfg.preciosPorTamano[tamano]`, pero
- * el usuario puede editarlo libremente. El canje también funciona por tamaño:
- * al entregar, se descuenta 1 garrafón nuevo de ese tamaño en el inventario.
+ * v2.6: un pedido puede tener MÚLTIPLES líneas (una por tamaño). Cada línea
+ * tiene su propio tamaño, cantidad, precio y canje. Esto permite registrar
+ * en un solo pedido "3×20L + 2×10L" en vez de tener que hacer dos pedidos.
+ *
+ * Modelo de datos:
+ *  - Pedidos nuevos (v2.6+): { lineas: [{ tamano, cantidad, precioUnit, canjeCantidad }] }
+ *  - Pedidos legacy (anteriores a v2.6): campos escalares tamano/cantidad/precioUnit/canjeCantidad
+ *    Se normalizan a una línea implícita vía lineasDePedido().
+ *
+ * Al guardar, siempre se usa el formato nuevo (array lineas). Los pedidos
+ * legacy no se modifican en disco a menos que se editen.
  */
 import { STORES, getAll, add, put, remove, getByIndex, getConfig } from '../db.js';
 import {
   el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
   dinero, numero, hoyISO, fechaLegible, METODOS_PAGO, ESTADOS_PEDIDO, folioCliente,
-  TAMANOS_GARRAFON, TAMANO_DEFAULT, tamanoPedido
+  TAMANOS_GARRAFON, TAMANO_DEFAULT, tamanoPedido, lineasDePedido, cantidadTotalPedido, canjeTotalPedido, resumenLineas
 } from '../utils.js';
 import { mapaClientes } from '../services.js';
 
@@ -35,14 +42,14 @@ function tarjetaPedido(p) {
   const cli = _mapa.get(p.clienteId);
   const nombre = cli ? cli.nombre : '— Cliente eliminado —';
   const folio = cli ? folioCliente(cli) : null;
-  const tam = tamanoPedido(p);
+  const resumen = resumenLineas(p);
+  const canjeT = canjeTotalPedido(p);
   const main = el('div', { class: 'item__main' }, [
-    el('div', { class: 'item__title', html: `${folio ? `<span class="num-inline">N.º ${folio}</span> ` : ''}${esc(nombre)} · ${numero(p.cantidad)} × ${esc(tam)}` }),
+    el('div', { class: 'item__title', html: `${folio ? `<span class="num-inline">N.º ${folio}</span> ` : ''}${esc(nombre)} · ${esc(resumen)}` }),
     el('div', { class: 'item__meta', html: `${esc(fechaLegible(p.fecha))} · ${esc(p.metodoPago || '')} · <strong>${dinero(p.total)}</strong>` }),
     el('div', { class: 'tag-line mt' }, [
       estadoCobroBadge(p),
-      el('span', { class: 'badge badge--info', text: '🛢️ ' + tam }),
-      p.canjeCantidad ? el('span', { class: 'badge badge--info', text: `🔄 ${p.canjeCantidad} canje` }) : null,
+      canjeT ? el('span', { class: 'badge badge--info', text: `🔄 ${canjeT} canje` }) : null,
       p.observaciones ? el('span', { class: 'badge badge--info', text: '📝 ' + p.observaciones.slice(0, 20) }) : null
     ])
   ]);
@@ -60,9 +67,9 @@ function tarjetaPedido(p) {
 
 function marcarEntregado(p) {
   const cli = _mapa.get(p.clienteId);
-  const tam = tamanoPedido(p);
+  const resumen = resumenLineas(p);
   const cont = el('div', {}, [
-    el('p', { class: 'confirm__msg', html: `Entrega para <strong>${esc(cli ? cli.nombre : 'cliente')}</strong> · ${numero(p.cantidad)} × ${esc(tam)}<br>Total: <strong>${dinero(p.total)}</strong>` }),
+    el('p', { class: 'confirm__msg', html: `Entrega para <strong>${esc(cli ? cli.nombre : 'cliente')}</strong> · ${esc(resumen)}<br>Total: <strong>${dinero(p.total)}</strong>` }),
     el('p', { class: 'muted', text: '¿Se cobró este pedido al momento de entregar?' }),
     el('div', { class: 'confirm__actions', style: 'flex-direction:column;gap:10px' }, [
       el('button', { class: 'btn btn--success btn--lg', html: `💵 Sí, pagó (${dinero(p.total)})`, onclick: () => confirmarEntrega(p, true) }),
@@ -94,26 +101,23 @@ async function eliminarPedido(p) {
   await recargar();
 }
 
-function calcularTotal(f, precioCanje) {
-  const cant = Number(f.querySelector('#pCantidad').value) || 0;
-  const precio = Number(f.querySelector('#pPrecio').value) || 0;
-  const canje = Number(f.querySelector('#pCanje') ? f.querySelector('#pCanje').value : 0) || 0;
-  const total = cant * precio + canje * (Number(precioCanje) || 0);
-  f.querySelector('#pTotal').textContent = dinero(total);
-  return total;
-}
-
-/** Sincroniza el movimiento de inventario por canje ligado a un pedido.
- *  v2.3: ahora registra el tamaño del garrafón canjeado en el inventario
- *  (campos nuevosPorTamano/usadosPorTamano), además del campo tamano. */
+/**
+ * Sincroniza los movimientos de inventario por canje ligados a un pedido.
+ * v2.6: ahora itera las líneas del pedido. Cada línea con canjeCantidad > 0
+ * genera un movimiento de inventario independiente para su tamaño.
+ */
 async function sincronizarCanje(pedido) {
   if (!pedido || pedido.id == null) return;
   const previos = await getByIndex(STORES.inventario, 'pedidoId', pedido.id);
   await Promise.all(previos.map((m) => remove(STORES.inventario, m.id)));
-  const qty = Math.max(0, Math.floor(Number(pedido.canjeCantidad) || 0));
-  if (pedido.estado === 'Entregado' && qty > 0) {
-    const tam = tamanoPedido(pedido);
-    // Deltas por tamaño: solo el tamaño del pedido se ve afectado.
+
+  if (pedido.estado !== 'Entregado') return;
+
+  const lineas = lineasDePedido(pedido);
+  for (const linea of lineas) {
+    const qty = Math.max(0, Math.floor(Number(linea.canjeCantidad) || 0));
+    if (qty <= 0) continue;
+    const tam = linea.tamano || tamanoPedido(pedido);
     const nuevosPorTamano = { '20L': 0, '19L': 0, '12L': 0, '10L': 0 };
     const usadosPorTamano = { '20L': 0, '19L': 0, '12L': 0, '10L': 0 };
     nuevosPorTamano[tam] = -qty;
@@ -123,8 +127,6 @@ async function sincronizarCanje(pedido) {
       tipo: 'Canje',
       tamano: tam,
       cantidad: qty,
-      // Mantenemos los campos legacy (suma total) para compatibilidad con
-      // reportes/exports viejos que los leían directamente.
       nuevos: -qty,
       usados: qty,
       nuevosPorTamano,
@@ -137,6 +139,160 @@ async function sincronizarCanje(pedido) {
   }
 }
 
+/* ===========================================================
+   FORMULARIO DE PEDIDO (múltiples líneas)
+   =========================================================== */
+
+let _lineaIdCounter = 0;
+function nuevaLineaId() { return 'linea_' + (++_lineaIdCounter) + '_' + Date.now(); }
+
+function crearLinea(lineaExistente = null) {
+  const preciosPorTamano = _cfg.preciosPorTamano || {};
+  const tamanoInicial = lineaExistente?.tamano || TAMANO_DEFAULT;
+  const linea = {
+    id: nuevaLineaId(),
+    tamano: tamanoInicial,
+    cantidad: lineaExistente?.cantidad ?? 1,
+    precioUnit: lineaExistente?.precioUnit ?? (preciosPorTamano[tamanoInicial] ?? 0),
+    canjeCantidad: lineaExistente?.canjeCantidad ?? 0
+  };
+  return linea;
+}
+
+function renderLinea(linea, contenedor) {
+  const preciosPorTamano = _cfg.preciosPorTamano || {};
+  const preciosCanjePorTamano = _cfg.preciosCanjePorTamano || {};
+  const fila = el('div', { class: 'linea-pedido', 'data-linea-id': linea.id, style: 'border:1px solid var(--bordo,#e0e0e0);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--gris-claro,#f8f9fa)' });
+
+  const tamanoSelect = el('select', { class: 'linea__tamano', style: 'width:100%' });
+  tamanoSelect.innerHTML = TAMANOS_GARRAFON.map((t) =>
+    `<option value="${esc(t)}" ${linea.tamano === t ? 'selected' : ''}>${esc(t)} (sugerido: ${dinero(preciosPorTamano[t] ?? 0)})</option>`
+  ).join('');
+  tamanoSelect.addEventListener('change', () => {
+    linea.tamano = tamanoSelect.value;
+    // Sugerir precio solo si el usuario no lo había editado manualmente
+    const precioInput = fila.querySelector('.linea__precio');
+    const sugerido = preciosPorTamano[linea.tamano] ?? 0;
+    if (!fila.dataset.precioEditado || fila.dataset.precioEditado === 'false') {
+      precioInput.value = sugerido;
+      linea.precioUnit = sugerido;
+    }
+    actualizarHintCanje(fila, linea);
+    recalcularTotal();
+  });
+
+  const cantidadInput = el('input', {
+    class: 'linea__cantidad', type: 'number', min: '1', step: '1', inputmode: 'numeric',
+    value: String(linea.cantidad), style: 'width:100%'
+  });
+  cantidadInput.addEventListener('input', () => {
+    linea.cantidad = Number(cantidadInput.value) || 0;
+    recalcularTotal();
+  });
+
+  const precioInput = el('input', {
+    class: 'linea__precio', type: 'number', min: '0', step: '0.5', inputmode: 'decimal',
+    value: String(linea.precioUnit), style: 'width:100%'
+  });
+  precioInput.addEventListener('input', () => {
+    linea.precioUnit = Number(precioInput.value) || 0;
+    const sugerido = preciosPorTamano[linea.tamano] ?? 0;
+    fila.dataset.precioEditado = String(linea.precioUnit !== sugerido);
+    recalcularTotal();
+  });
+
+  const canjeInput = el('input', {
+    class: 'linea__canje', type: 'number', min: '0', step: '1', inputmode: 'numeric',
+    value: String(linea.canjeCantidad), style: 'width:100%'
+  });
+  canjeInput.addEventListener('input', () => {
+    linea.canjeCantidad = Number(canjeInput.value) || 0;
+    recalcularTotal();
+  });
+
+  const btnQuitar = el('button', {
+    type: 'button', class: 'btn btn--ghost btn--sm', title: 'Quitar esta línea', text: '🗑️',
+    onclick: () => {
+      const idx = _lineasActuales.findIndex((l) => l.id === linea.id);
+      if (idx >= 0) _lineasActuales.splice(idx, 1);
+      fila.remove();
+      recalcularTotal();
+      // Si solo queda una línea, ocultar su botón de quitar
+      actualizarBotonesQuitar();
+    }
+  });
+
+  fila.innerHTML = `
+    <div class="field--row" style="align-items:end;gap:8px">
+      <div class="field" style="flex:0 0 90px">
+        <label style="font-weight:700;font-size:.85rem">Tamaño</label>
+      </div>
+      <div class="field" style="flex:1 1 80px">
+        <label style="font-weight:700;font-size:.85rem">Cantidad</label>
+      </div>
+      <div class="field" style="flex:1 1 100px">
+        <label style="font-weight:700;font-size:.85rem">Precio c/u</label>
+      </div>
+      <div class="field" style="flex:1 1 80px">
+        <label style="font-weight:700;font-size:.85rem">Canje</label>
+      </div>
+      <div class="field" style="flex:0 0 40px"></div>
+    </div>
+    <div class="field--row" style="align-items:end;gap:8px">
+      <div class="field" style="flex:0 0 90px" data-slot="tamano"></div>
+      <div class="field" style="flex:1 1 80px" data-slot="cantidad"></div>
+      <div class="field" style="flex:1 1 100px" data-slot="precio"></div>
+      <div class="field" style="flex:1 1 80px" data-slot="canje"></div>
+      <div class="field" style="flex:0 0 40px" data-slot="quitar"></div>
+    </div>
+    <p class="hint" style="margin:4px 0 0;font-size:.75rem" data-slot="hintCanje"></p>
+  `;
+  fila.querySelector('[data-slot="tamano"]').appendChild(tamanoSelect);
+  fila.querySelector('[data-slot="cantidad"]').appendChild(cantidadInput);
+  fila.querySelector('[data-slot="precio"]').appendChild(precioInput);
+  fila.querySelector('[data-slot="canje"]').appendChild(canjeInput);
+  fila.querySelector('[data-slot="quitar"]').appendChild(btnQuitar);
+
+  contenedor.appendChild(fila);
+  actualizarHintCanje(fila, linea);
+
+  function actualizarHintCanje(f, l) {
+    const hint = f.querySelector('[data-slot="hintCanje"]');
+    if (!hint) return;
+    const canjeSugerido = preciosCanjePorTamano[l.tamano] ?? 0;
+    hint.textContent = `Canje: +${dinero(canjeSugerido)} c/u · descuenta garrafón nuevo de ${l.tamano} al entregar`;
+  }
+
+  return fila;
+}
+
+let _lineasActuales = [];
+let _formRef = null;
+let _recalcTotalFn = null;
+
+function actualizarBotonesQuitar() {
+  if (!_formRef) return;
+  const botones = _formRef.querySelectorAll('.linea-pedido button[title*="Quitar"]');
+  botones.forEach((b) => {
+    b.style.display = _lineasActuales.length > 1 ? '' : 'none';
+  });
+}
+
+function recalcularTotal() {
+  if (!_formRef) return;
+  const preciosCanjePorTamano = _cfg.preciosCanjePorTamano || {};
+  let total = 0;
+  _lineasActuales.forEach((l) => {
+    const cant = Number(l.cantidad) || 0;
+    const pu = Number(l.precioUnit) || 0;
+    const canje = Number(l.canjeCantidad) || 0;
+    const precioCanje = preciosCanjePorTamano[l.tamano] ?? 0;
+    total += cant * pu + canje * precioCanje;
+  });
+  const span = _formRef.querySelector('#pTotal');
+  if (span) span.textContent = dinero(Math.round(total * 100) / 100);
+}
+
 function formularioPedido(pedido = {}) {
   const esEdit = !!pedido.id;
   if (!_clientes.length) {
@@ -145,14 +301,13 @@ function formularioPedido(pedido = {}) {
     return;
   }
   const f = el('form', { class: 'form' });
-  // v2.3: tamaño del pedido (default 19L) y precio sugerido según tamaño.
-  const tamanoInicial = tamanoPedido(pedido);
-  const preciosPorTamano = _cfg.preciosPorTamano || {};
-  const preciosCanjePorTamano = _cfg.preciosCanjePorTamano || {};
-  const precioDef = pedido.precioUnit != null
-    ? pedido.precioUnit
-    : (preciosPorTamano[tamanoInicial] ?? _cfg.precioDomicilio ?? 0);
+  _formRef = f;
   const cobroActual = estadoCobroVal(pedido);
+
+  // Inicializar líneas: si es edición, cargar las existentes; si no, una línea vacía
+  _lineasActuales = lineasDePedido(pedido).map((l) => crearLinea(l));
+  if (!_lineasActuales.length) _lineasActuales.push(crearLinea());
+
   f.innerHTML = `
     <div class="field">
       <label for="pCliente">Cliente *</label>
@@ -166,27 +321,12 @@ function formularioPedido(pedido = {}) {
         <label for="pFecha">Fecha *</label>
         <input id="pFecha" name="fecha" type="date" required value="${esc(pedido.fecha || hoyISO())}" />
       </div>
-      <div class="field">
-        <label for="pCantidad">Garrafones *</label>
-        <input id="pCantidad" name="cantidad" type="number" min="1" step="1" inputmode="numeric" required value="${esc(pedido.cantidad || 1)}" />
-      </div>
-    </div>
-    <div class="field--row">
-      <div class="field">
-        <label for="pTamano">Tamaño de garrafón *</label>
-        <select id="pTamano" name="tamano" required>
-          ${TAMANOS_GARRAFON.map((t) => `<option value="${esc(t)}" ${tamanoInicial === t ? 'selected' : ''}>${esc(t)} (precio sugerido: ${dinero(preciosPorTamano[t] ?? 0)})</option>`).join('')}
-        </select>
-      </div>
-      <div class="field">
-        <label for="pPrecio">Precio por garrafón</label>
-        <input id="pPrecio" name="precioUnit" type="number" min="0" step="0.5" inputmode="decimal" value="${esc(precioDef)}" />
-      </div>
     </div>
     <div class="field">
-      <label for="pCanje">Garrafones en canje (cambio por uno nuevo)</label>
-      <input id="pCanje" name="canjeCantidad" type="number" min="0" step="1" inputmode="numeric" value="${esc(pedido.canjeCantidad || 0)}" />
-      <p class="hint" style="margin:4px 0 0">Cada canje suma <span id="pHintCanje">${dinero(preciosCanjePorTamano[tamanoInicial] ?? 0)}</span> al total y, al entregar, descuenta 1 garrafón nuevo del inventario.</p>
+      <label style="font-weight:700">🛢️ Garrafones por tamaño</label>
+      <p class="hint" style="margin:0 0 8px">Agrega una línea por cada tamaño que el cliente quiera. El total se calcula automáticamente.</p>
+      <div id="pLineas"></div>
+      <button type="button" class="btn btn--ghost btn--sm" id="btnAgregarLinea" style="margin-top:6px">➕ Agregar otro tamaño</button>
     </div>
     <div class="field--row">
       <div class="field">
@@ -210,7 +350,7 @@ function formularioPedido(pedido = {}) {
     </div>
     <div class="card" style="margin:0;background:var(--azul-claro)">
       <div class="flex"><span class="grow"><strong>Total</strong></span><span id="pTotal" style="font-size:1.4rem;font-weight:800">$0</span></div>
-      <p class="hint" style="margin:6px 0 0">Si el pedido queda “a crédito”, el adeudo aparece automáticamente en Cobranza.</p>
+      <p class="hint" style="margin:6px 0 0">Si el pedido queda "a crédito", el adeudo aparece automáticamente en Cobranza.</p>
     </div>
     <div class="form__actions">
       <button type="button" class="btn btn--ghost btn--lg grow" id="btnCancelar">Cancelar</button>
@@ -218,68 +358,60 @@ function formularioPedido(pedido = {}) {
     </div>
   `;
 
-  const selTamano = f.querySelector('#pTamano');
-  const inputPrecio = f.querySelector('#pPrecio');
-  const inputCant = f.querySelector('#pCantidad');
-  const inputCanje = f.querySelector('#pCanje');
-  const hintCanje = f.querySelector('#pHintCanje');
+  // Renderizar las líneas iniciales
+  const lineasCont = f.querySelector('#pLineas');
+  _lineasActuales.forEach((l) => renderLinea(l, lineasCont));
+  actualizarBotonesQuitar();
 
-  // Al cambiar el tamaño: si el precio actual coincide con el precio sugerido
-  // del tamaño anterior, lo actualizamos al nuevo sugerido. Si el usuario lo
-  // había editado manualmente, lo respetamos (no lo pisamos).
-  let precioEditadoManualmente = false;
-  selTamano.addEventListener('change', () => {
-    const nuevoTam = selTamano.value;
-    const sugerido = preciosPorTamano[nuevoTam] ?? 0;
-    const canjeSugerido = preciosCanjePorTamano[nuevoTam] ?? 0;
-    if (!precioEditadoManualmente) {
-      inputPrecio.value = sugerido;
-    }
-    if (hintCanje) hintCanje.textContent = dinero(canjeSugerido);
-    recalc();
-  });
-  inputPrecio.addEventListener('input', () => {
-    // Detecta si el usuario escribe un precio distinto al sugerido del tamaño actual.
-    const sugerido = preciosPorTamano[selTamano.value] ?? 0;
-    precioEditadoManualmente = Number(inputPrecio.value) !== Number(sugerido);
-    recalc();
+  // Botón "Agregar otro tamaño"
+  f.querySelector('#btnAgregarLinea').addEventListener('click', () => {
+    const nueva = crearLinea();
+    _lineasActuales.push(nueva);
+    renderLinea(nueva, lineasCont);
+    actualizarBotonesQuitar();
+    recalcularTotal();
   });
 
-  const recalc = () => calcularTotal(f, preciosCanjePorTamano[selTamano.value] ?? 0);
-
-  inputCant.addEventListener('input', recalc);
-  inputCanje.addEventListener('input', recalc);
   f.querySelector('#btnCancelar').addEventListener('click', cerrarModal);
 
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(f).entries());
     if (!fd.clienteId) { toast('Selecciona un cliente', 'error'); return; }
-    const cantidad = Number(fd.cantidad) || 0;
-    const precioUnit = Number(fd.precioUnit) || 0;
-    if (cantidad < 1) { toast('La cantidad debe ser al menos 1', 'error'); return; }
 
-    // Estado de cobro (3 estados) -> estado + pagado
+    // Validar y construir las líneas definitivas
+    const lineas = _lineasActuales.map((l) => ({
+      tamano: l.tamano || TAMANO_DEFAULT,
+      cantidad: Math.max(0, Math.floor(Number(l.cantidad) || 0)),
+      precioUnit: Number(l.precioUnit) || 0,
+      canjeCantidad: Math.max(0, Math.floor(Number(l.canjeCantidad) || 0))
+    })).filter((l) => l.cantidad > 0 || l.canjeCantidad > 0);
+
+    if (!lineas.length) {
+      toast('Agrega al menos una línea con cantidad mayor a 0', 'error');
+      return;
+    }
+
+    // Estado de cobro
     const cobro = fd.cobro || 'pendiente';
     let estado = 'Pendiente';
     let pagado = false;
     if (cobro === 'pagado') { estado = 'Entregado'; pagado = true; }
     else if (cobro === 'credito') { estado = 'Entregado'; pagado = false; }
 
-    const canjeCantidad = Math.max(0, Math.floor(Number(fd.canjeCantidad) || 0));
-    const tamano = fd.tamano || TAMANO_DEFAULT;
-    const precioCanje = Number(preciosCanjePorTamano[tamano]) || 0;
+    // Calcular total final
+    const preciosCanjePorTamano = _cfg.preciosCanjePorTamano || {};
+    const total = Math.round(lineas.reduce((s, l) => {
+      const precioCanje = preciosCanjePorTamano[l.tamano] ?? 0;
+      return s + l.cantidad * l.precioUnit + l.canjeCantidad * precioCanje;
+    }, 0) * 100) / 100;
 
     const registro = {
       ...pedido,
       clienteId: Number(fd.clienteId),
       fecha: fd.fecha,
-      tamano,
-      cantidad,
-      precioUnit,
-      canjeCantidad,
-      precioCanje,
-      total: Math.round((cantidad * precioUnit + canjeCantidad * precioCanje) * 100) / 100,
+      lineas,
+      total,
       estado,
       pagado,
       metodoPago: fd.metodoPago,
@@ -287,6 +419,15 @@ function formularioPedido(pedido = {}) {
     };
     if (estado === 'Entregado' && !registro.entregadoEn) registro.entregadoEn = new Date().toISOString();
     if (estado === 'Pendiente') delete registro.entregadoEn;
+
+    // Mantener campos legacy sincronizados (para que reportes/exports viejos sigan funcionando)
+    // Tomamos la primera línea como representativa para los campos escalares.
+    const primera = lineas[0];
+    registro.tamano = primera.tamano;
+    registro.cantidad = lineas.reduce((s, l) => s + l.cantidad, 0);
+    registro.precioUnit = primera.precioUnit;
+    registro.canjeCantidad = lineas.reduce((s, l) => s + l.canjeCantidad, 0);
+    registro.precioCanje = preciosCanjePorTamano[primera.tamano] ?? 0;
 
     if (esEdit) {
       await put(STORES.pedidos, registro);
@@ -299,12 +440,14 @@ function formularioPedido(pedido = {}) {
       await sincronizarCanje(registro);
       toast('Pedido registrado', 'success');
     }
+    _formRef = null;
+    _lineasActuales = [];
     cerrarModal();
     await recargar();
   });
 
   abrirModal(esEdit ? 'Editar pedido' : 'Nuevo pedido', f);
-  recalc();
+  recalcularTotal();
 }
 
 function aplicarFiltros() {
@@ -316,13 +459,14 @@ function aplicarFiltros() {
 
   let lista = _pedidos.slice();
   if (estado) lista = lista.filter((p) => p.estado === estado);
-  if (tam) lista = lista.filter((p) => tamanoPedido(p) === tam);
+  if (tam) lista = lista.filter((p) => lineasDePedido(p).some((l) => l.tamano === tam));
   if (q) lista = lista.filter((p) => {
     const cli = _mapa.get(p.clienteId);
+    const r = resumenLineas(p).toLowerCase();
     return (cli?.nombre || '').toLowerCase().includes(q)
       || (cli ? folioCliente(cli) : '').includes(q)
       || (p.observaciones || '').toLowerCase().includes(q)
-      || tamanoPedido(p).toLowerCase().includes(q);
+      || r.includes(q);
   });
   lista.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '') || (b.id - a.id));
 

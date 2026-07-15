@@ -4,7 +4,7 @@
 import { STORES, getAll, add, remove, getByIndex } from '../db.js';
 import {
   el, $, toast, abrirModal, cerrarModal, confirmar, esc, debounce,
-  dinero, hoyISO, fechaLegible, tamanoPedido
+  dinero, hoyISO, fechaLegible, tamanoPedido, resumenLineas
 } from '../utils.js';
 import { saldosTodos, esAdeudoPedido } from '../services.js';
 
@@ -83,8 +83,8 @@ async function verHistorial(cliente) {
   const movimientos = [];
   pedidos.forEach((p) => {
     if (esAdeudoPedido(p)) {
-      const tam = tamanoPedido(p);
-      movimientos.push({ fecha: (p.entregadoEn || '').slice(0, 10) || p.fecha, tipo: 'cargo', etiqueta: `Pedido entregado a crédito (${p.cantidad} × ${tam})`, monto: Number(p.total) || 0 });
+      // v2.6: mostrar resumen de líneas (ej: "3×20L + 2×10L")
+      movimientos.push({ fecha: (p.entregadoEn || '').slice(0, 10) || p.fecha, tipo: 'cargo', etiqueta: `Pedido entregado a crédito (${resumenLineas(p)})`, monto: Number(p.total) || 0 });
     }
   });
   pagos.forEach((p) => {

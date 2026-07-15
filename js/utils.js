@@ -301,3 +301,46 @@ export function tamanoPedido(p) {
   if (!p) return TAMANO_DEFAULT;
   return esTamanoValido(p.tamano) ? p.tamano : TAMANO_DEFAULT;
 }
+
+/**
+ * Devuelve las líneas de un pedido como array.
+ *
+ * v2.6: un pedido puede tener múltiples líneas (una por tamaño). Esta función
+ * normaliza ambos formatos:
+ *  - Pedidos nuevos: tienen `lineas: [{ tamano, cantidad, precioUnit, canjeCantidad }]`.
+ *  - Pedidos legacy (anteriores a v2.6): tienen campos escalares `tamano`,
+ *    `cantidad`, `precioUnit`, `canjeCantidad`. Se construye una línea implícita.
+ *
+ * Siempre devuelve un array (vacío si el pedido no tiene datos).
+ */
+export function lineasDePedido(p) {
+  if (!p) return [];
+  if (Array.isArray(p.lineas) && p.lineas.length) return p.lineas;
+  // Legacy: construir una línea implícita desde los campos escalares
+  if (p.tamano || p.cantidad || p.precioUnit != null) {
+    return [{
+      tamano: tamanoPedido(p),
+      cantidad: Number(p.cantidad) || 0,
+      precioUnit: Number(p.precioUnit) || 0,
+      canjeCantidad: Number(p.canjeCantidad) || 0
+    }];
+  }
+  return [];
+}
+
+/** Cantidad total de garrafones de un pedido (suma de todas sus líneas). */
+export function cantidadTotalPedido(p) {
+  return lineasDePedido(p).reduce((s, l) => s + (Number(l.cantidad) || 0), 0);
+}
+
+/** Canje total de un pedido (suma del canje de todas sus líneas). */
+export function canjeTotalPedido(p) {
+  return lineasDePedido(p).reduce((s, l) => s + (Number(l.canjeCantidad) || 0), 0);
+}
+
+/** Devuelve un resumen compacto de las líneas: "3×20L + 2×10L". */
+export function resumenLineas(p) {
+  const lineas = lineasDePedido(p);
+  if (!lineas.length) return '—';
+  return lineas.map((l) => `${Number(l.cantidad) || 0}×${l.tamano || TAMANO_DEFAULT}`).join(' + ');
+}

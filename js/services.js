@@ -15,7 +15,7 @@
  * Ingresos (ventas): se cuentan cuando el pedido se ENTREGA (no al crearlo).
  */
 import { STORES, getAll, getByIndex } from './db.js';
-import { hoyISO, inicioSemanaISO, inicioMesISO, diasEntre, sumarDiasISO, FRECUENCIA_DIAS, tipoGasto, TAMANOS_GARRAFON, TAMANO_DEFAULT, tamanoPedido } from './utils.js';
+import { hoyISO, inicioSemanaISO, inicioMesISO, diasEntre, sumarDiasISO, FRECUENCIA_DIAS, tipoGasto, TAMANOS_GARRAFON, TAMANO_DEFAULT, tamanoPedido, lineasDePedido, cantidadTotalPedido, canjeTotalPedido, resumenLineas } from './utils.js';
 
 /**
  * Ruta sugerida para una fecha dada (v2.4).
@@ -174,8 +174,9 @@ export async function resumenDashboard() {
 
   const ventasDia = entregadosHoy.reduce((s, p) => s + (Number(p.total) || 0), 0);
   const ventasSemana = entregadosSemana.reduce((s, p) => s + (Number(p.total) || 0), 0);
-  const garrafonesTotal = entregadosTotal.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
-  const garrafonesHoy = entregadosHoy.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  // v2.6: usar cantidadTotalPedido (suma de líneas) en vez de p.cantidad escalar
+  const garrafonesTotal = entregadosTotal.reduce((s, p) => s + cantidadTotalPedido(p), 0);
+  const garrafonesHoy = entregadosHoy.reduce((s, p) => s + cantidadTotalPedido(p), 0);
 
   let adeudoTotal = 0; let clientesConAdeudo = 0;
   for (const v of saldos.values()) { if (v > 0.001) { adeudoTotal += v; clientesConAdeudo++; } }
@@ -183,7 +184,7 @@ export async function resumenDashboard() {
   const pendientes = pedidos.filter((p) => p.estado === 'Pendiente').length;
 
   // KPIs ampliados
-  const garrafonesSemana = entregadosSemana.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
+  const garrafonesSemana = entregadosSemana.reduce((s, p) => s + cantidadTotalPedido(p), 0);
   const pedidosEntregadosSemana = entregadosSemana.length;
   const ticketPromedio = pedidosEntregadosSemana ? ventasSemana / pedidosEntregadosSemana : 0;
   const pctConAdeudo = clientes.length ? (clientesConAdeudo / clientes.length) * 100 : 0;
@@ -216,7 +217,8 @@ export async function clientesMasFrecuentes(limite = 10) {
   const garraf = new Map();
   pedidos.forEach((p) => {
     conteo.set(p.clienteId, (conteo.get(p.clienteId) || 0) + 1);
-    garraf.set(p.clienteId, (garraf.get(p.clienteId) || 0) + (Number(p.cantidad) || 0));
+    // v2.6: usar cantidadTotalPedido (suma de líneas) en vez de p.cantidad escalar
+    garraf.set(p.clienteId, (garraf.get(p.clienteId) || 0) + cantidadTotalPedido(p));
   });
   return clientes
     .map((c) => ({ cliente: c, pedidos: conteo.get(c.id) || 0, garrafones: garraf.get(c.id) || 0 }))
@@ -325,9 +327,17 @@ export async function inteligenciaPorGarrafon(dias = 30) {
   const desde = sumarDiasISO(hasta, -(dias - 1));
 
   const entregados = filtrarPorFecha(pedidos.filter(esVentaPedido), desde, hasta);
-  const garrafones = entregados.reduce((s, p) => s + (Number(p.cantidad) || 0), 0);
-  // Ingreso SOLO por agua (excluye el cargo de canje del envase).
-  const ingresoAgua = entregados.reduce((s, p) => s + ((Number(p.cantidad) || 0) * (Number(p.precioUnit) || 0)), 0);
+  // v2.6: iterar líneas de cada pedido (un pedido puede tener múltiples tamaños)
+  let garrafones = 0;
+  let ingresoAgua = 0;
+  entregados.forEach((p) => {
+    lineasDePedido(p).forEach((l) => {
+      const c = Number(l.cantidad) || 0;
+      const pu = Number(l.precioUnit) || 0;
+      garrafones += c;
+      ingresoAgua += c * pu; // Ingreso SOLO por agua (excluye el cargo de canje del envase)
+    });
+  });
 
   let directo = 0; let distribucion = 0; let fijo = 0;
   filtrarPorFecha(gastos, desde, hasta).forEach((g) => {
@@ -401,17 +411,20 @@ export async function stockGarrafones() {
 }
 
 /** Cuenta garrafones de una lista de pedidos, agrupados por tamaño.
- *  Devuelve { '20L': n, '19L': n, '12L': n, '10L': n, _total: n }. */
+ *  v2.6: ahora itera las líneas de cada pedido (un pedido puede tener
+ *  múltiples tamaños). Devuelve { '20L': n, '19L': n, '12L': n, '10L': n, _total: n }. */
 export function garrafonesPorTamano(pedidos) {
   const out = {};
   TAMANOS_GARRAFON.forEach((t) => { out[t] = 0; });
   let total = 0;
   (pedidos || []).forEach((p) => {
-    const tam = tamanoPedido(p);
-    const c = Number(p.cantidad) || 0;
-    if (out[tam] != null) out[tam] += c;
-    else out[tam] = c;
-    total += c;
+    lineasDePedido(p).forEach((l) => {
+      const tam = l.tamano || TAMANO_DEFAULT;
+      const c = Number(l.cantidad) || 0;
+      if (out[tam] != null) out[tam] += c;
+      else out[tam] = c;
+      total += c;
+    });
   });
   out._total = total;
   return out;
@@ -424,7 +437,8 @@ export function ventasPorDia(pedidos, desdeISO, hastaISO) {
     const f = (p.fecha || '').slice(0, 10);
     const cur = map.get(f) || { fecha: f, total: 0, garrafones: 0, pedidos: 0 };
     cur.total += Number(p.total) || 0;
-    cur.garrafones += Number(p.cantidad) || 0;
+    // v2.6: usar cantidadTotalPedido (suma de líneas) en vez de p.cantidad escalar
+    cur.garrafones += cantidadTotalPedido(p);
     cur.pedidos += 1;
     map.set(f, cur);
   });

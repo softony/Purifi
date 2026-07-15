@@ -4,7 +4,7 @@
 import { STORES, getAll } from '../db.js';
 import {
   el, $, dinero, numero, hoyISO, fechaLegible, inicioSemanaISO, inicioMesISO,
-  nombreMes, toast, folioCliente, esc, TAMANOS_GARRAFON, tamanoPedido
+  nombreMes, toast, folioCliente, esc, TAMANOS_GARRAFON, tamanoPedido, lineasDePedido, resumenLineas, cantidadTotalPedido
 } from '../utils.js';
 import {
   ventasPorDia, filtrarPorFecha, clientesMasFrecuentes, saldosTodos, mapaClientes,
@@ -163,8 +163,21 @@ function expExcel() {
       rows: TAMANOS_GARRAFON.map((t) => ({ Tamano: t, Garrafones: d.porTamano[t] || 0, Porcentaje: (((d.porTamano[t] || 0) / (d.totalGarrafones || 1)) * 100).toFixed(1) + '%' })),
     },
     {
+      // v2.6: una fila por línea de pedido (más granular)
       nombre: 'Pedidos detallados',
-      rows: d.enRango.map((p) => ({ Fecha: p.fecha, Tamano: tamanoPedido(p), Cantidad: p.cantidad, PrecioUnit: p.precioUnit, Total: p.total, Estado: p.estado, Pagado: p.pagado ? 'Sí' : 'No' })),
+      rows: d.enRango.flatMap((p) => lineasDePedido(p).map((l, idx) => ({
+        PedidoId: p.id,
+        Fecha: p.fecha,
+        Linea: idx + 1,
+        Tamano: l.tamano || '20L',
+        Cantidad: l.cantidad,
+        PrecioUnit: l.precioUnit,
+        Subtotal: (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0),
+        Canje: l.canjeCantidad || 0,
+        TotalPedido: p.total,
+        Estado: p.estado,
+        Pagado: p.pagado ? 'Sí' : 'No'
+      }))),
     },
     {
       nombre: 'Clientes frecuentes',

@@ -4,7 +4,7 @@
  * Usa librerías vendorizadas (SheetJS, jsPDF + AutoTable) cacheadas para offline.
  */
 import { dumpAll, importAll, getConfig, setConfig, STORES, getAll } from './db.js';
-import { descargarArchivo, hoyISO, toast, fechaHoraLegible, TAMANOS_GARRAFON, tamanoPedido } from './utils.js';
+import { descargarArchivo, hoyISO, toast, fechaHoraLegible, TAMANOS_GARRAFON, tamanoPedido, lineasDePedido, resumenLineas, cantidadTotalPedido, canjeTotalPedido } from './utils.js';
 
 /* ---------- Respaldo completo JSON ---------- */
 export async function exportarJSON() {
@@ -264,14 +264,50 @@ export async function exportarExcelCompleto() {
     },
     {
       nombre: 'Pedidos',
-      rows: pedidos.map((p) => ({ ...p, cliente: mapaCliente.get(p.clienteId) || '—', tamano: tamanoPedido(p) })),
+      rows: pedidos.map((p) => ({
+        id: p.id,
+        fecha: p.fecha,
+        cliente: mapaCliente.get(p.clienteId) || '—',
+        lineas: resumenLineas(p), // v2.6: resumen compacto "3×20L + 2×10L"
+        garrafones: cantidadTotalPedido(p),
+        total: p.total,
+        estado: p.estado,
+        metodoPago: p.metodoPago,
+        observaciones: p.observaciones || ''
+      })),
       columns: [
         { key: 'id', label: 'ID' }, { key: 'fecha', label: 'Fecha' },
-        { key: 'cliente', label: 'Cliente' }, { key: 'tamano', label: 'Tamaño' },
-        { key: 'cantidad', label: 'Garrafones' },
-        { key: 'precioUnit', label: 'Precio Unit.' }, { key: 'total', label: 'Total' },
+        { key: 'cliente', label: 'Cliente' }, { key: 'lineas', label: 'Líneas' },
+        { key: 'garrafones', label: 'Garrafones totales' },
+        { key: 'total', label: 'Total' },
         { key: 'estado', label: 'Estado' }, { key: 'metodoPago', label: 'Método de pago' },
         { key: 'observaciones', label: 'Observaciones' }
+      ]
+    },
+    {
+      // v2.6: hoja detallada con una fila por línea de pedido
+      nombre: 'Líneas de pedidos',
+      rows: pedidos.flatMap((p) => {
+        const cliente = mapaCliente.get(p.clienteId) || '—';
+        return lineasDePedido(p).map((l, idx) => ({
+          pedidoId: p.id,
+          fecha: p.fecha,
+          cliente,
+          linea: idx + 1,
+          tamano: l.tamano || '20L',
+          cantidad: l.cantidad,
+          precioUnit: l.precioUnit,
+          subtotal: (Number(l.cantidad) || 0) * (Number(l.precioUnit) || 0),
+          canjeCantidad: l.canjeCantidad || 0,
+          estado: p.estado
+        }));
+      }),
+      columns: [
+        { key: 'pedidoId', label: 'Pedido ID' }, { key: 'fecha', label: 'Fecha' },
+        { key: 'cliente', label: 'Cliente' }, { key: 'linea', label: 'Línea' },
+        { key: 'tamano', label: 'Tamaño' }, { key: 'cantidad', label: 'Cantidad' },
+        { key: 'precioUnit', label: 'Precio Unit.' }, { key: 'subtotal', label: 'Subtotal' },
+        { key: 'canjeCantidad', label: 'Canje' }, { key: 'estado', label: 'Estado pedido' }
       ]
     },
     {
